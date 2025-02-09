@@ -97,6 +97,13 @@ SpeedInput.Text = "50"
 SpeedInput.TextColor3 = Color3.fromRGB(255, 255, 0)
 SpeedInput.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
 
+game.Players.LocalPlayer.CharacterAdded:Connect(function(char)
+    wait(1)
+    toggleSpeed(true)
+    toggleNoclip(true)
+    toggleInfiniteJump(true)
+end)
+
 local function toggleSpeed(enabled)
     if enabled then
         local speed = tonumber(SpeedInput.Text) or 50
@@ -169,3 +176,4 @@ end
 createToggleButton("Speed", UDim2.new(0.05, 0, 0.2, 0), "Speed", Color3.fromRGB(255, 255, 0), toggleSpeed)
 createToggleButton("Noclip", UDim2.new(0.05, 0, 0.4, 0), "Noclip", Color3.fromRGB(0, 255, 255), toggleNoclip)
 createToggleButton("Jump", UDim2.new(0.05, 0, 0.6, 0), "Infinite Jump", Color3.fromRGB(255, 0, 255), toggleInfiniteJump)
+
