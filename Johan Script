@@ -1,0 +1,171 @@
+local Hub = Instance.new("ScreenGui")
+local MainFrame = Instance.new("Frame")
+local Title = Instance.new("TextLabel")
+local Creator = Instance.new("TextLabel")
+local MinimizeButton = Instance.new("TextButton")
+local CloseButton = Instance.new("TextButton")
+local Icon = Instance.new("TextButton")
+local SpeedInput = Instance.new("TextBox")
+
+Hub.Name = "JohanHub"
+Hub.Parent = game.CoreGui
+
+MainFrame.Name = "MainFrame"
+MainFrame.Parent = Hub
+MainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+MainFrame.Position = UDim2.new(0.3, 0, 0.2, 0)
+MainFrame.Size = UDim2.new(0, 320, 0, 300)
+MainFrame.Draggable = true
+MainFrame.Active = true
+
+Title.Name = "Title"
+Title.Parent = MainFrame
+Title.BackgroundTransparency = 1
+Title.Position = UDim2.new(0.02, 0, 0, 0)
+Title.Size = UDim2.new(0, 100, 0, 30)
+Title.Font = Enum.Font.SourceSansBold
+Title.Text = "Johan Hub"
+Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+Title.TextSize = 20
+
+Creator.Name = "Creator"
+Creator.Parent = MainFrame
+Creator.BackgroundTransparency = 1
+Creator.Position = UDim2.new(0.25, 0, 0, 0)
+Creator.Size = UDim2.new(0, 140, 0, 25)
+Creator.Font = Enum.Font.SourceSansBold
+Creator.Text = "By Johan Asian Manik"
+Creator.TextSize = 14
+Creator.TextStrokeTransparency = 0
+
+spawn(function()
+    while true do
+        for i = 0, 1, 0.02 do
+            Creator.TextColor3 = Color3.fromHSV(i, 1, 1)
+            wait(0.1)
+        end
+    end
+end)
+
+MinimizeButton.Name = "Minimize"
+MinimizeButton.Parent = MainFrame
+MinimizeButton.Position = UDim2.new(0.75, 0, 0, 0)
+MinimizeButton.Size = UDim2.new(0, 30, 0, 30)
+MinimizeButton.BackgroundColor3 = Color3.fromRGB(0, 0, 255)
+MinimizeButton.TextTransparency = 0.3
+MinimizeButton.Text = "-"
+
+CloseButton.Name = "Close"
+CloseButton.Parent = MainFrame
+CloseButton.Position = UDim2.new(0.88, 0, 0, 0)
+CloseButton.Size = UDim2.new(0, 30, 0, 30)
+CloseButton.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
+CloseButton.TextTransparency = 0.3
+CloseButton.Text = "X"
+
+CloseButton.MouseButton1Click:Connect(function()
+    game.Players.LocalPlayer.Character.Humanoid.WalkSpeed = 16
+    if Noclip then Noclip:Disconnect() end
+    InfiniteJumpEnabled = false
+    Hub:Destroy()
+end)
+
+MinimizeButton.MouseButton1Click:Connect(function()
+    MainFrame.Visible = false
+    Icon.Visible = true
+end)
+
+Icon.Name = "Icon"
+Icon.Parent = Hub
+Icon.Position = UDim2.new(0.05, 0, 0.05, 0)
+Icon.Size = UDim2.new(0, 50, 0, 50)
+Icon.Text = "☰"
+Icon.Visible = false
+Icon.Draggable = true
+
+Icon.MouseButton1Click:Connect(function()
+    MainFrame.Visible = true
+    Icon.Visible = false
+end)
+
+SpeedInput.Name = "SpeedInput"
+SpeedInput.Parent = MainFrame
+SpeedInput.Position = UDim2.new(0.7, 0, 0.2, 0)
+SpeedInput.Size = UDim2.new(0, 80, 0, 30)
+SpeedInput.PlaceholderText = "Speed 1-100"
+SpeedInput.Text = "50"
+SpeedInput.TextColor3 = Color3.fromRGB(255, 255, 0)
+SpeedInput.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+
+local function toggleSpeed(enabled)
+    if enabled then
+        local speed = tonumber(SpeedInput.Text) or 50
+        speed = math.clamp(speed, 1, 100)
+        game.Players.LocalPlayer.Character.Humanoid.WalkSpeed = speed
+    else
+        game.Players.LocalPlayer.Character.Humanoid.WalkSpeed = 16
+    end
+end
+
+local function toggleNoclip(enabled)
+    if enabled then
+        Clip = false
+        Noclip = game:GetService('RunService').Stepped:Connect(function()
+            if Clip == false and game.Players.LocalPlayer.Character ~= nil then
+                for _, v in pairs(game.Players.LocalPlayer.Character:GetDescendants()) do
+                    if v:IsA('BasePart') and v.CanCollide then
+                        v.CanCollide = false
+                    end
+                end
+            end
+        end)
+    else
+        if Noclip then Noclip:Disconnect() end
+        Clip = true
+    end
+end
+
+local function toggleInfiniteJump(enabled)
+    InfiniteJumpEnabled = enabled
+end
+
+game:GetService("UserInputService").JumpRequest:connect(function()
+    if InfiniteJumpEnabled then
+        game.Players.LocalPlayer.Character:FindFirstChildOfClass'Humanoid':ChangeState("Jumping")
+    end
+end)
+
+local function createToggleButton(name, position, labelText, color, callback)
+    local Button = Instance.new("TextButton")
+    Button.Name = name .. "Toggle"
+    Button.Parent = MainFrame
+    Button.Position = position
+    Button.Size = UDim2.new(0, 80, 0, 30)
+    Button.Text = "OFF"
+    Button.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
+    Button.TextColor3 = color
+    
+    local Label = Instance.new("TextLabel")
+    Label.Parent = MainFrame
+    Label.Position = UDim2.new(0.5, -50, position.Y.Scale, 0)
+    Label.Size = UDim2.new(0, 100, 0, 30)
+    Label.Text = labelText
+    Label.TextColor3 = color
+    Label.BackgroundTransparency = 1
+    Label.TextScaled = true
+    Label.TextWrapped = true
+    
+    local toggled = false
+    Button.MouseButton1Click:Connect(function()
+        toggled = not toggled
+        Button.Text = toggled and "ON" or "OFF"
+        Button.BackgroundColor3 = toggled and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(255, 0, 0)
+        if callback then callback(toggled) end
+    end)
+    
+    return Button
+end
+
+createToggleButton("Speed", UDim2.new(0.05, 0, 0.2, 0), "Speed", Color3.fromRGB(255, 255, 0), toggleSpeed)
+createToggleButton("Noclip", UDim2.new(0.05, 0, 0.4, 0), "Noclip", Color3.fromRGB(0, 255, 255), toggleNoclip)
+createToggleButton("Jump", UDim2.new(0.05, 0, 0.6, 0), "Infinite Jump", Color3.fromRGB(255, 0, 255), toggleInfiniteJump)
