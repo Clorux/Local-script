@@ -93,7 +93,7 @@ SpeedInput.Parent = MainFrame
 SpeedInput.Position = UDim2.new(0.7, 0, 0.2, 0)
 SpeedInput.Size = UDim2.new(0, 80, 0, 30)
 SpeedInput.PlaceholderText = "Speed 1-1000"
-SpeedInput.Text = "50"
+SpeedInput.Text = "75"
 SpeedInput.TextColor3 = Color3.fromRGB(255, 255, 0)
 SpeedInput.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
 
@@ -106,7 +106,7 @@ end)
 
 local function toggleSpeed(enabled)
     if enabled then
-        local speed = tonumber(SpeedInput.Text) or 50
+        local speed = tonumber(SpeedInput.Text) or 75
         speed = math.clamp(speed, 1, 1000)
         game.Players.LocalPlayer.Character.Humanoid.WalkSpeed = speed
     else
