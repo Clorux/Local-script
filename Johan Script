@@ -1,3 +1,8 @@
+warn("Johan Hub By Johan Asian Manik")  -- Warning message on script activation
+
+-----------------------------------------------
+-- Create GUI elements
+-----------------------------------------------
 local Hub = Instance.new("ScreenGui")
 local MainFrame = Instance.new("Frame")
 local Title = Instance.new("TextLabel")
@@ -88,8 +93,23 @@ Icon.MouseButton1Click:Connect(function()
     Icon.Visible = false
 end)
 
+-----------------------------------------------
+-- Add ScrollingFrame for controls (SpeedInput, Toggle Buttons, Gravity, Instant Interact)
+-----------------------------------------------
+local ToggleScroll = Instance.new("ScrollingFrame")
+ToggleScroll.Name = "ToggleScroll"
+ToggleScroll.Parent = MainFrame
+ToggleScroll.BackgroundTransparency = 1
+-- Raised slightly upward: position Y changed from 0.3 to 0.225 (approximately 0.3/1.33)
+ToggleScroll.Position = UDim2.new(0, 0, 0.225, 0)
+-- Adjusted size to fill the remaining area of MainFrame (1 - 0.225 = 0.775)
+ToggleScroll.Size = UDim2.new(1, 0, 0.775, 0)
+ToggleScroll.CanvasSize = UDim2.new(0, 0, 2, 0)
+ToggleScroll.ScrollBarThickness = 5
+
+-- Move SpeedInput into ToggleScroll so that it aligns with the Speed toggle
 SpeedInput.Name = "SpeedInput"
-SpeedInput.Parent = MainFrame
+SpeedInput.Parent = ToggleScroll
 SpeedInput.Position = UDim2.new(0.7, 0, 0.2, 0)
 SpeedInput.Size = UDim2.new(0, 80, 0, 30)
 SpeedInput.PlaceholderText = "Speed 1-1000"
@@ -97,30 +117,43 @@ SpeedInput.Text = "75"
 SpeedInput.TextColor3 = Color3.fromRGB(255, 255, 0)
 SpeedInput.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
 
-game.Players.LocalPlayer.CharacterAdded:Connect(function(char)
-    wait(1)
-    toggleSpeed(true)
-    toggleNoclip(true)
-    toggleInfiniteJump(true)
-end)
+-----------------------------------------------
+-- Global Variables for Storing State
+-----------------------------------------------
+local speedState = false
+local noclipState = false
+local infiniteJumpState = false
+local gravityState = false
+local instantInteractEnabled = true
 
+-----------------------------------------------
+-- System Toggle & Functions (with Persist State)
+-----------------------------------------------
 local function toggleSpeed(enabled)
-    if enabled then
-        local speed = tonumber(SpeedInput.Text) or 75
-        speed = math.clamp(speed, 1, 1000)
-        game.Players.LocalPlayer.Character.Humanoid.WalkSpeed = speed
-    else
-        game.Players.LocalPlayer.Character.Humanoid.WalkSpeed = 16
+    speedState = enabled
+    if game.Players.LocalPlayer.Character then
+        local humanoid = game.Players.LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            if enabled then
+                local speed = tonumber(SpeedInput.Text) or 75
+                speed = math.clamp(speed, 1, 1000)
+                humanoid.WalkSpeed = speed
+            else
+                humanoid.WalkSpeed = 16
+            end
+        end
     end
 end
 
 local function toggleNoclip(enabled)
+    noclipState = enabled
     if enabled then
         Clip = false
-        Noclip = game:GetService('RunService').Stepped:Connect(function()
-            if Clip == false and game.Players.LocalPlayer.Character ~= nil then
+        if Noclip then Noclip:Disconnect() end
+        Noclip = game:GetService("RunService").Stepped:Connect(function()
+            if not Clip and game.Players.LocalPlayer.Character then
                 for _, v in pairs(game.Players.LocalPlayer.Character:GetDescendants()) do
-                    if v:IsA('BasePart') and v.CanCollide then
+                    if v:IsA("BasePart") then
                         v.CanCollide = false
                     end
                 end
@@ -129,36 +162,96 @@ local function toggleNoclip(enabled)
     else
         if Noclip then Noclip:Disconnect() end
         Clip = true
+        -- Re-enable collisions for all BaseParts in the character when noclip is disabled
+        if game.Players.LocalPlayer.Character then
+            for _, v in pairs(game.Players.LocalPlayer.Character:GetDescendants()) do
+                if v:IsA("BasePart") then
+                    v.CanCollide = true
+                end
+            end
+        end
     end
 end
 
 local function toggleInfiniteJump(enabled)
+    infiniteJumpState = enabled
     InfiniteJumpEnabled = enabled
 end
 
-game:GetService("UserInputService").JumpRequest:connect(function()
+local function toggleGravity(enabled)
+    gravityState = enabled
+    if enabled then
+        local g = tonumber(GravityInput.Text) or 100
+        workspace.Gravity = g
+    else
+        workspace.Gravity = 196.2  -- Default gravity
+    end
+end
+
+local function toggleInstantInteract(enabled)
+    instantInteractEnabled = enabled
+end
+
+game:GetService("UserInputService").JumpRequest:Connect(function()
     if InfiniteJumpEnabled then
-        game.Players.LocalPlayer.Character:FindFirstChildOfClass'Humanoid':ChangeState("Jumping")
+        game.Players.LocalPlayer.Character:FindFirstChildOfClass("Humanoid"):ChangeState("Jumping")
     end
 end)
 
+-- When a new character spawns, reapply the stored states
+game.Players.LocalPlayer.CharacterAdded:Connect(function(char)
+    wait(1)
+    toggleSpeed(speedState)
+    toggleNoclip(noclipState)
+    toggleInfiniteJump(infiniteJumpState)
+    toggleGravity(gravityState)
+end)
+
+-- Update gravity when the user finishes input, if gravity override is active
+local GravityInput = Instance.new("TextBox")
+GravityInput.Name = "GravityInput"
+GravityInput.Parent = ToggleScroll
+GravityInput.Position = UDim2.new(0.7, 0, 0.8, 0)
+GravityInput.Size = UDim2.new(0, 80, 0, 30)
+GravityInput.PlaceholderText = "-100-600"
+GravityInput.Text = "100"
+GravityInput.TextColor3 = Color3.fromRGB(255, 255, 0)
+GravityInput.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+GravityInput.Font = Enum.Font.SourceSansBold
+GravityInput.TextScaled = true
+GravityInput.TextWrapped = true
+
+GravityInput.FocusLost:Connect(function(enterPressed)
+    if enterPressed and gravityState then
+        local newGravity = tonumber(GravityInput.Text) or 100
+        workspace.Gravity = newGravity
+    end
+end)
+
+-----------------------------------------------
+-- Create Toggle Buttons
+-----------------------------------------------
 local function createToggleButton(name, position, labelText, color, callback)
     local Button = Instance.new("TextButton")
     Button.Name = name .. "Toggle"
-    Button.Parent = MainFrame
+    Button.Parent = ToggleScroll
     Button.Position = position
     Button.Size = UDim2.new(0, 80, 0, 30)
     Button.Text = "OFF"
     Button.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
     Button.TextColor3 = color
+    Button.Font = Enum.Font.SourceSansBold
+    Button.TextScaled = true
+    Button.TextWrapped = true
     
     local Label = Instance.new("TextLabel")
-    Label.Parent = MainFrame
+    Label.Parent = ToggleScroll
     Label.Position = UDim2.new(0.5, -50, position.Y.Scale, 0)
     Label.Size = UDim2.new(0, 100, 0, 30)
     Label.Text = labelText
     Label.TextColor3 = color
     Label.BackgroundTransparency = 1
+    Label.Font = Enum.Font.SourceSansBold
     Label.TextScaled = true
     Label.TextWrapped = true
     
@@ -173,7 +266,303 @@ local function createToggleButton(name, position, labelText, color, callback)
     return Button
 end
 
-createToggleButton("Speed", UDim2.new(0.05, 0, 0.2, 0), "Speed", Color3.fromRGB(255, 255, 0), toggleSpeed)
-createToggleButton("Noclip", UDim2.new(0.05, 0, 0.4, 0), "Noclip", Color3.fromRGB(0, 255, 255), toggleNoclip)
-createToggleButton("Jump", UDim2.new(0.05, 0, 0.6, 0), "Infinite Jump", Color3.fromRGB(255, 0, 255), toggleInfiniteJump)
+-- Create toggle buttons with text color set to slightly dimmed white (RGB 200,200,200)
+createToggleButton("Speed", UDim2.new(0.05, 0, 0.2, 0), "Speed", Color3.fromRGB(200,200,200), toggleSpeed)
+createToggleButton("Noclip", UDim2.new(0.05, 0, 0.4, 0), "Noclip", Color3.fromRGB(200,200,200), toggleNoclip)
+createToggleButton("Jump", UDim2.new(0.05, 0, 0.6, 0), "Infinite Jump", Color3.fromRGB(200,200,200), toggleInfiniteJump)
+createToggleButton("Gravity", UDim2.new(0.05, 0, 0.8, 0), "Gravity", Color3.fromRGB(200,200,200), toggleGravity)
+createToggleButton("InstantInteract", UDim2.new(0.05, 0, 1.0, 0), "Instant Interact", Color3.fromRGB(200,200,200), toggleInstantInteract)
 
+-----------------------------------------------
+-- Instant Interact Event (print removed)
+-----------------------------------------------
+local ProximityPromptService = game:GetService("ProximityPromptService")
+ProximityPromptService.PromptButtonHoldBegan:Connect(function(prompt, player)
+    if instantInteractEnabled and prompt then
+        fireproximityprompt(prompt)
+    end
+end)
+warn("Johan Hub By Johan Asian Manik")  -- Warning message on script activation
+
+-----------------------------------------------
+-- Create GUI elements
+-----------------------------------------------
+local Hub = Instance.new("ScreenGui")
+local MainFrame = Instance.new("Frame")
+local Title = Instance.new("TextLabel")
+local Creator = Instance.new("TextLabel")
+local MinimizeButton = Instance.new("TextButton")
+local CloseButton = Instance.new("TextButton")
+local Icon = Instance.new("TextButton")
+local SpeedInput = Instance.new("TextBox")
+
+Hub.Name = "JohanHub"
+Hub.Parent = game.CoreGui
+
+MainFrame.Name = "MainFrame"
+MainFrame.Parent = Hub
+MainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+MainFrame.Position = UDim2.new(0.3, 0, 0.2, 0)
+MainFrame.Size = UDim2.new(0, 320, 0, 300)
+MainFrame.Draggable = true
+MainFrame.Active = true
+
+Title.Name = "Title"
+Title.Parent = MainFrame
+Title.BackgroundTransparency = 1
+Title.Position = UDim2.new(0.02, 0, 0, 0)
+Title.Size = UDim2.new(0, 100, 0, 30)
+Title.Font = Enum.Font.SourceSansBold
+Title.Text = "Johan Hub"
+Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+Title.TextSize = 20
+
+Creator.Name = "Creator"
+Creator.Parent = MainFrame
+Creator.BackgroundTransparency = 1
+Creator.Position = UDim2.new(0.25, 0, 0, 0)
+Creator.Size = UDim2.new(0, 140, 0, 25)
+Creator.Font = Enum.Font.SourceSansBold
+Creator.Text = "By Johan Asian Manik"
+Creator.TextSize = 14
+Creator.TextStrokeTransparency = 0
+
+spawn(function()
+    while true do
+        for i = 0, 1, 0.02 do
+            Creator.TextColor3 = Color3.fromHSV(i, 1, 1)
+            wait(0.1)
+        end
+    end
+end)
+
+MinimizeButton.Name = "Minimize"
+MinimizeButton.Parent = MainFrame
+MinimizeButton.Position = UDim2.new(0.75, 0, 0, 0)
+MinimizeButton.Size = UDim2.new(0, 30, 0, 30)
+MinimizeButton.BackgroundColor3 = Color3.fromRGB(0, 0, 255)
+MinimizeButton.TextTransparency = 0.3
+MinimizeButton.Text = "-"
+
+CloseButton.Name = "Close"
+CloseButton.Parent = MainFrame
+CloseButton.Position = UDim2.new(0.88, 0, 0, 0)
+CloseButton.Size = UDim2.new(0, 30, 0, 30)
+CloseButton.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
+CloseButton.TextTransparency = 0.3
+CloseButton.Text = "X"
+
+CloseButton.MouseButton1Click:Connect(function()
+    game.Players.LocalPlayer.Character.Humanoid.WalkSpeed = 16
+    if Noclip then Noclip:Disconnect() end
+    InfiniteJumpEnabled = false
+    Hub:Destroy()
+end)
+
+MinimizeButton.MouseButton1Click:Connect(function()
+    MainFrame.Visible = false
+    Icon.Visible = true
+end)
+
+Icon.Name = "Icon"
+Icon.Parent = Hub
+Icon.Position = UDim2.new(0.05, 0, 0.05, 0)
+Icon.Size = UDim2.new(0, 50, 0, 50)
+Icon.Text = "☰"
+Icon.Visible = false
+Icon.Draggable = true
+
+Icon.MouseButton1Click:Connect(function()
+    MainFrame.Visible = true
+    Icon.Visible = false
+end)
+
+-----------------------------------------------
+-- Add ScrollingFrame for controls (SpeedInput, Toggle Buttons, Gravity, Instant Interact)
+-----------------------------------------------
+local ToggleScroll = Instance.new("ScrollingFrame")
+ToggleScroll.Name = "ToggleScroll"
+ToggleScroll.Parent = MainFrame
+ToggleScroll.BackgroundTransparency = 1
+-- Raised slightly upward: position Y changed from 0.3 to 0.225 (approximately 0.3/1.33)
+ToggleScroll.Position = UDim2.new(0, 0, 0.225, 0)
+-- Adjusted size to fill the remaining area of MainFrame (1 - 0.225 = 0.775)
+ToggleScroll.Size = UDim2.new(1, 0, 0.775, 0)
+ToggleScroll.CanvasSize = UDim2.new(0, 0, 2, 0)
+ToggleScroll.ScrollBarThickness = 5
+
+-- Move SpeedInput into ToggleScroll so that it aligns with the Speed toggle
+SpeedInput.Name = "SpeedInput"
+SpeedInput.Parent = ToggleScroll
+SpeedInput.Position = UDim2.new(0.7, 0, 0.2, 0)
+SpeedInput.Size = UDim2.new(0, 80, 0, 30)
+SpeedInput.PlaceholderText = "Speed 1-1000"
+SpeedInput.Text = "75"
+SpeedInput.TextColor3 = Color3.fromRGB(255, 255, 0)
+SpeedInput.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+
+-----------------------------------------------
+-- Global Variables for Storing State
+-----------------------------------------------
+local speedState = false
+local noclipState = false
+local infiniteJumpState = false
+local gravityState = false
+local instantInteractEnabled = true
+
+-----------------------------------------------
+-- System Toggle & Functions (with Persist State)
+-----------------------------------------------
+local function toggleSpeed(enabled)
+    speedState = enabled
+    if game.Players.LocalPlayer.Character then
+        local humanoid = game.Players.LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            if enabled then
+                local speed = tonumber(SpeedInput.Text) or 75
+                speed = math.clamp(speed, 1, 1000)
+                humanoid.WalkSpeed = speed
+            else
+                humanoid.WalkSpeed = 16
+            end
+        end
+    end
+end
+
+local function toggleNoclip(enabled)
+    noclipState = enabled
+    if enabled then
+        Clip = false
+        if Noclip then Noclip:Disconnect() end
+        Noclip = game:GetService("RunService").Stepped:Connect(function()
+            if not Clip and game.Players.LocalPlayer.Character then
+                for _, v in pairs(game.Players.LocalPlayer.Character:GetDescendants()) do
+                    if v:IsA("BasePart") then
+                        v.CanCollide = false
+                    end
+                end
+            end
+        end)
+    else
+        if Noclip then Noclip:Disconnect() end
+        Clip = true
+        -- Re-enable collisions for all BaseParts in the character when noclip is disabled
+        if game.Players.LocalPlayer.Character then
+            for _, v in pairs(game.Players.LocalPlayer.Character:GetDescendants()) do
+                if v:IsA("BasePart") then
+                    v.CanCollide = true
+                end
+            end
+        end
+    end
+end
+
+local function toggleInfiniteJump(enabled)
+    infiniteJumpState = enabled
+    InfiniteJumpEnabled = enabled
+end
+
+local function toggleGravity(enabled)
+    gravityState = enabled
+    if enabled then
+        local g = tonumber(GravityInput.Text) or 100
+        workspace.Gravity = g
+    else
+        workspace.Gravity = 196.2  -- Default gravity
+    end
+end
+
+local function toggleInstantInteract(enabled)
+    instantInteractEnabled = enabled
+end
+
+game:GetService("UserInputService").JumpRequest:Connect(function()
+    if InfiniteJumpEnabled then
+        game.Players.LocalPlayer.Character:FindFirstChildOfClass("Humanoid"):ChangeState("Jumping")
+    end
+end)
+
+-- When a new character spawns, reapply the stored states
+game.Players.LocalPlayer.CharacterAdded:Connect(function(char)
+    wait(1)
+    toggleSpeed(speedState)
+    toggleNoclip(noclipState)
+    toggleInfiniteJump(infiniteJumpState)
+    toggleGravity(gravityState)
+end)
+
+-- Update gravity when the user finishes input, if gravity override is active
+local GravityInput = Instance.new("TextBox")
+GravityInput.Name = "GravityInput"
+GravityInput.Parent = ToggleScroll
+GravityInput.Position = UDim2.new(0.7, 0, 0.8, 0)
+GravityInput.Size = UDim2.new(0, 80, 0, 30)
+GravityInput.PlaceholderText = "-100-600"
+GravityInput.Text = "100"
+GravityInput.TextColor3 = Color3.fromRGB(255, 255, 0)
+GravityInput.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+GravityInput.Font = Enum.Font.SourceSansBold
+GravityInput.TextScaled = true
+GravityInput.TextWrapped = true
+
+GravityInput.FocusLost:Connect(function(enterPressed)
+    if enterPressed and gravityState then
+        local newGravity = tonumber(GravityInput.Text) or 100
+        workspace.Gravity = newGravity
+    end
+end)
+
+-----------------------------------------------
+-- Create Toggle Buttons
+-----------------------------------------------
+local function createToggleButton(name, position, labelText, color, callback)
+    local Button = Instance.new("TextButton")
+    Button.Name = name .. "Toggle"
+    Button.Parent = ToggleScroll
+    Button.Position = position
+    Button.Size = UDim2.new(0, 80, 0, 30)
+    Button.Text = "OFF"
+    Button.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
+    Button.TextColor3 = color
+    Button.Font = Enum.Font.SourceSansBold
+    Button.TextScaled = true
+    Button.TextWrapped = true
+    
+    local Label = Instance.new("TextLabel")
+    Label.Parent = ToggleScroll
+    Label.Position = UDim2.new(0.5, -50, position.Y.Scale, 0)
+    Label.Size = UDim2.new(0, 100, 0, 30)
+    Label.Text = labelText
+    Label.TextColor3 = color
+    Label.BackgroundTransparency = 1
+    Label.Font = Enum.Font.SourceSansBold
+    Label.TextScaled = true
+    Label.TextWrapped = true
+    
+    local toggled = false
+    Button.MouseButton1Click:Connect(function()
+        toggled = not toggled
+        Button.Text = toggled and "ON" or "OFF"
+        Button.BackgroundColor3 = toggled and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(255, 0, 0)
+        if callback then callback(toggled) end
+    end)
+    
+    return Button
+end
+
+-- Create toggle buttons with text color set to slightly dimmed white (RGB 200,200,200)
+createToggleButton("Speed", UDim2.new(0.05, 0, 0.2, 0), "Speed", Color3.fromRGB(200,200,200), toggleSpeed)
+createToggleButton("Noclip", UDim2.new(0.05, 0, 0.4, 0), "Noclip", Color3.fromRGB(200,200,200), toggleNoclip)
+createToggleButton("Jump", UDim2.new(0.05, 0, 0.6, 0), "Infinite Jump", Color3.fromRGB(200,200,200), toggleInfiniteJump)
+createToggleButton("Gravity", UDim2.new(0.05, 0, 0.8, 0), "Gravity", Color3.fromRGB(200,200,200), toggleGravity)
+createToggleButton("InstantInteract", UDim2.new(0.05, 0, 1.0, 0), "Instant Interact", Color3.fromRGB(200,200,200), toggleInstantInteract)
+
+-----------------------------------------------
+-- Instant Interact Event (print removed)
+-----------------------------------------------
+local ProximityPromptService = game:GetService("ProximityPromptService")
+ProximityPromptService.PromptButtonHoldBegan:Connect(function(prompt, player)
+    if instantInteractEnabled and prompt then
+        fireproximityprompt(prompt)
+    end
+end)
