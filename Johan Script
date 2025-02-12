@@ -94,23 +94,23 @@ Icon.MouseButton1Click:Connect(function()
 end)
 
 -----------------------------------------------
--- Add ScrollingFrame for controls (SpeedInput, Toggle Buttons, Gravity, Instant Interact)
+-- Add ScrollingFrame for controls (SpeedInput, Toggle Buttons, Gravity, Instant Interact, God Mode)
 -----------------------------------------------
 local ToggleScroll = Instance.new("ScrollingFrame")
 ToggleScroll.Name = "ToggleScroll"
 ToggleScroll.Parent = MainFrame
 ToggleScroll.BackgroundTransparency = 1
--- Raised slightly upward: position Y changed from 0.3 to 0.225 (approximately 0.3/1.33)
+-- Position set near the top: Y = 0.225
 ToggleScroll.Position = UDim2.new(0, 0, 0.225, 0)
--- Adjusted size to fill the remaining area of MainFrame (1 - 0.225 = 0.775)
+-- Adjust size to fill the remaining area (reduced CanvasSize for compact grouping)
 ToggleScroll.Size = UDim2.new(1, 0, 0.775, 0)
-ToggleScroll.CanvasSize = UDim2.new(0, 0, 2, 0)
+ToggleScroll.CanvasSize = UDim2.new(0, 0, 0.7, 0)
 ToggleScroll.ScrollBarThickness = 5
 
--- Move SpeedInput into ToggleScroll so that it aligns with the Speed toggle
+-- Reposition SpeedInput to align with the Speed toggle (moved to the top)
 SpeedInput.Name = "SpeedInput"
 SpeedInput.Parent = ToggleScroll
-SpeedInput.Position = UDim2.new(0.7, 0, 0.2, 0)
+SpeedInput.Position = UDim2.new(0.7, 0, 0.05, 0)  -- Now aligned with Speed toggle at Y = 0.05
 SpeedInput.Size = UDim2.new(0, 80, 0, 30)
 SpeedInput.PlaceholderText = "Speed 1-1000"
 SpeedInput.Text = "75"
@@ -125,14 +125,17 @@ local noclipState = false
 local infiniteJumpState = false
 local gravityState = false
 local instantInteractEnabled = true
+local godModeState = true  -- God Mode enabled by default
+local godModeConnection = nil
 
 -----------------------------------------------
 -- System Toggle & Functions (with Persist State)
 -----------------------------------------------
 local function toggleSpeed(enabled)
     speedState = enabled
-    if game.Players.LocalPlayer.Character then
-        local humanoid = game.Players.LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+    local character = game.Players.LocalPlayer.Character
+    if character then
+        local humanoid = character:FindFirstChildOfClass("Humanoid")
         if humanoid then
             if enabled then
                 local speed = tonumber(SpeedInput.Text) or 75
@@ -147,12 +150,13 @@ end
 
 local function toggleNoclip(enabled)
     noclipState = enabled
+    local character = game.Players.LocalPlayer.Character
     if enabled then
         Clip = false
         if Noclip then Noclip:Disconnect() end
         Noclip = game:GetService("RunService").Stepped:Connect(function()
-            if not Clip and game.Players.LocalPlayer.Character then
-                for _, v in pairs(game.Players.LocalPlayer.Character:GetDescendants()) do
+            if not Clip and character then
+                for _, v in pairs(character:GetDescendants()) do
                     if v:IsA("BasePart") then
                         v.CanCollide = false
                     end
@@ -162,9 +166,8 @@ local function toggleNoclip(enabled)
     else
         if Noclip then Noclip:Disconnect() end
         Clip = true
-        -- Re-enable collisions for all BaseParts in the character when noclip is disabled
-        if game.Players.LocalPlayer.Character then
-            for _, v in pairs(game.Players.LocalPlayer.Character:GetDescendants()) do
+        if character then
+            for _, v in pairs(character:GetDescendants()) do
                 if v:IsA("BasePart") then
                     v.CanCollide = true
                 end
@@ -192,26 +195,66 @@ local function toggleInstantInteract(enabled)
     instantInteractEnabled = enabled
 end
 
+local function toggleGodMode(enabled)
+    godModeState = enabled
+    local character = game.Players.LocalPlayer.Character
+    if character then
+        local humanoid = character:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            if enabled then
+                if godModeConnection then
+                    godModeConnection:Disconnect()
+                    godModeConnection = nil
+                end
+                godModeConnection = humanoid.HealthChanged:Connect(function(newHealth)
+                    if newHealth < humanoid.MaxHealth then
+                        humanoid.Health = humanoid.MaxHealth
+                    end
+                end)
+                humanoid.Health = humanoid.MaxHealth
+            else
+                if godModeConnection then
+                    godModeConnection:Disconnect()
+                    godModeConnection = nil
+                end
+            end
+        end
+    end
+end
+
+-- Continuous enforcement of God Mode using Heartbeat
+game:GetService("RunService").Heartbeat:Connect(function()
+    local character = game.Players.LocalPlayer.Character
+    if character and godModeState then
+        local humanoid = character:FindFirstChildOfClass("Humanoid")
+        if humanoid and humanoid.Health < humanoid.MaxHealth then
+            humanoid.Health = humanoid.MaxHealth
+        end
+    end
+end)
+
 game:GetService("UserInputService").JumpRequest:Connect(function()
-    if InfiniteJumpEnabled then
-        game.Players.LocalPlayer.Character:FindFirstChildOfClass("Humanoid"):ChangeState("Jumping")
+    local character = game.Players.LocalPlayer.Character
+    if InfiniteJumpEnabled and character then
+        character:FindFirstChildOfClass("Humanoid"):ChangeState("Jumping")
     end
 end)
 
 -- When a new character spawns, reapply the stored states
-game.Players.LocalPlayer.CharacterAdded:Connect(function(char)
+game.Players.LocalPlayer.CharacterAdded:Connect(function(character)
     wait(1)
     toggleSpeed(speedState)
     toggleNoclip(noclipState)
     toggleInfiniteJump(infiniteJumpState)
     toggleGravity(gravityState)
+    toggleGodMode(godModeState)
 end)
 
 -- Update gravity when the user finishes input, if gravity override is active
 local GravityInput = Instance.new("TextBox")
 GravityInput.Name = "GravityInput"
 GravityInput.Parent = ToggleScroll
-GravityInput.Position = UDim2.new(0.7, 0, 0.8, 0)
+GravityInput.Position = UDim2.new(0.7, 0, 0.35, 0)  -- Aligned with Gravity toggle at Y = 0.35
 GravityInput.Size = UDim2.new(0, 80, 0, 30)
 GravityInput.PlaceholderText = "-100-600"
 GravityInput.Text = "100"
@@ -243,7 +286,7 @@ local function createToggleButton(name, position, labelText, color, callback)
     Button.Font = Enum.Font.SourceSansBold
     Button.TextScaled = true
     Button.TextWrapped = true
-    
+
     local Label = Instance.new("TextLabel")
     Label.Parent = ToggleScroll
     Label.Position = UDim2.new(0.5, -50, position.Y.Scale, 0)
@@ -254,7 +297,7 @@ local function createToggleButton(name, position, labelText, color, callback)
     Label.Font = Enum.Font.SourceSansBold
     Label.TextScaled = true
     Label.TextWrapped = true
-    
+
     local toggled = false
     Button.MouseButton1Click:Connect(function()
         toggled = not toggled
@@ -267,11 +310,12 @@ local function createToggleButton(name, position, labelText, color, callback)
 end
 
 -- Create toggle buttons with text color set to slightly dimmed white (RGB 200,200,200)
-createToggleButton("Speed", UDim2.new(0.05, 0, 0.2, 0), "Speed", Color3.fromRGB(200,200,200), toggleSpeed)
-createToggleButton("Noclip", UDim2.new(0.05, 0, 0.4, 0), "Noclip", Color3.fromRGB(200,200,200), toggleNoclip)
-createToggleButton("Jump", UDim2.new(0.05, 0, 0.6, 0), "Infinite Jump", Color3.fromRGB(200,200,200), toggleInfiniteJump)
-createToggleButton("Gravity", UDim2.new(0.05, 0, 0.8, 0), "Gravity", Color3.fromRGB(200,200,200), toggleGravity)
-createToggleButton("InstantInteract", UDim2.new(0.05, 0, 1.0, 0), "Instant Interact", Color3.fromRGB(200,200,200), toggleInstantInteract)
+createToggleButton("Speed", UDim2.new(0.05, 0, 0.05, 0), "Speed", Color3.fromRGB(200,200,200), toggleSpeed)
+createToggleButton("Noclip", UDim2.new(0.05, 0, 0.15, 0), "Noclip", Color3.fromRGB(200,200,200), toggleNoclip)
+createToggleButton("Jump", UDim2.new(0.05, 0, 0.25, 0), "Infinite Jump", Color3.fromRGB(200,200,200), toggleInfiniteJump)
+createToggleButton("Gravity", UDim2.new(0.05, 0, 0.35, 0), "Gravity", Color3.fromRGB(200,200,200), toggleGravity)
+createToggleButton("InstantInteract", UDim2.new(0.05, 0, 0.45, 0), "Instant Interact", Color3.fromRGB(200,200,200), toggleInstantInteract)
+createToggleButton("GodMode", UDim2.new(0.05, 0, 0.55, 0), "God Mode", Color3.fromRGB(200,200,200), toggleGodMode)
 
 -----------------------------------------------
 -- Instant Interact Event (print removed)
@@ -378,23 +422,23 @@ Icon.MouseButton1Click:Connect(function()
 end)
 
 -----------------------------------------------
--- Add ScrollingFrame for controls (SpeedInput, Toggle Buttons, Gravity, Instant Interact)
+-- Add ScrollingFrame for controls (SpeedInput, Toggle Buttons, Gravity, Instant Interact, God Mode)
 -----------------------------------------------
 local ToggleScroll = Instance.new("ScrollingFrame")
 ToggleScroll.Name = "ToggleScroll"
 ToggleScroll.Parent = MainFrame
 ToggleScroll.BackgroundTransparency = 1
--- Raised slightly upward: position Y changed from 0.3 to 0.225 (approximately 0.3/1.33)
+-- Position set near the top: Y = 0.225
 ToggleScroll.Position = UDim2.new(0, 0, 0.225, 0)
--- Adjusted size to fill the remaining area of MainFrame (1 - 0.225 = 0.775)
+-- Adjust size to fill the remaining area (reduced CanvasSize for compact grouping)
 ToggleScroll.Size = UDim2.new(1, 0, 0.775, 0)
-ToggleScroll.CanvasSize = UDim2.new(0, 0, 2, 0)
+ToggleScroll.CanvasSize = UDim2.new(0, 0, 0.7, 0)
 ToggleScroll.ScrollBarThickness = 5
 
--- Move SpeedInput into ToggleScroll so that it aligns with the Speed toggle
+-- Reposition SpeedInput to align with the Speed toggle (moved to the top)
 SpeedInput.Name = "SpeedInput"
 SpeedInput.Parent = ToggleScroll
-SpeedInput.Position = UDim2.new(0.7, 0, 0.2, 0)
+SpeedInput.Position = UDim2.new(0.7, 0, 0.05, 0)  -- Now aligned with Speed toggle at Y = 0.05
 SpeedInput.Size = UDim2.new(0, 80, 0, 30)
 SpeedInput.PlaceholderText = "Speed 1-1000"
 SpeedInput.Text = "75"
@@ -409,14 +453,17 @@ local noclipState = false
 local infiniteJumpState = false
 local gravityState = false
 local instantInteractEnabled = true
+local godModeState = true  -- God Mode enabled by default
+local godModeConnection = nil
 
 -----------------------------------------------
 -- System Toggle & Functions (with Persist State)
 -----------------------------------------------
 local function toggleSpeed(enabled)
     speedState = enabled
-    if game.Players.LocalPlayer.Character then
-        local humanoid = game.Players.LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+    local character = game.Players.LocalPlayer.Character
+    if character then
+        local humanoid = character:FindFirstChildOfClass("Humanoid")
         if humanoid then
             if enabled then
                 local speed = tonumber(SpeedInput.Text) or 75
@@ -431,12 +478,13 @@ end
 
 local function toggleNoclip(enabled)
     noclipState = enabled
+    local character = game.Players.LocalPlayer.Character
     if enabled then
         Clip = false
         if Noclip then Noclip:Disconnect() end
         Noclip = game:GetService("RunService").Stepped:Connect(function()
-            if not Clip and game.Players.LocalPlayer.Character then
-                for _, v in pairs(game.Players.LocalPlayer.Character:GetDescendants()) do
+            if not Clip and character then
+                for _, v in pairs(character:GetDescendants()) do
                     if v:IsA("BasePart") then
                         v.CanCollide = false
                     end
@@ -446,9 +494,8 @@ local function toggleNoclip(enabled)
     else
         if Noclip then Noclip:Disconnect() end
         Clip = true
-        -- Re-enable collisions for all BaseParts in the character when noclip is disabled
-        if game.Players.LocalPlayer.Character then
-            for _, v in pairs(game.Players.LocalPlayer.Character:GetDescendants()) do
+        if character then
+            for _, v in pairs(character:GetDescendants()) do
                 if v:IsA("BasePart") then
                     v.CanCollide = true
                 end
@@ -476,26 +523,66 @@ local function toggleInstantInteract(enabled)
     instantInteractEnabled = enabled
 end
 
+local function toggleGodMode(enabled)
+    godModeState = enabled
+    local character = game.Players.LocalPlayer.Character
+    if character then
+        local humanoid = character:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            if enabled then
+                if godModeConnection then
+                    godModeConnection:Disconnect()
+                    godModeConnection = nil
+                end
+                godModeConnection = humanoid.HealthChanged:Connect(function(newHealth)
+                    if newHealth < humanoid.MaxHealth then
+                        humanoid.Health = humanoid.MaxHealth
+                    end
+                end)
+                humanoid.Health = humanoid.MaxHealth
+            else
+                if godModeConnection then
+                    godModeConnection:Disconnect()
+                    godModeConnection = nil
+                end
+            end
+        end
+    end
+end
+
+-- Continuous enforcement of God Mode using Heartbeat
+game:GetService("RunService").Heartbeat:Connect(function()
+    local character = game.Players.LocalPlayer.Character
+    if character and godModeState then
+        local humanoid = character:FindFirstChildOfClass("Humanoid")
+        if humanoid and humanoid.Health < humanoid.MaxHealth then
+            humanoid.Health = humanoid.MaxHealth
+        end
+    end
+end)
+
 game:GetService("UserInputService").JumpRequest:Connect(function()
-    if InfiniteJumpEnabled then
-        game.Players.LocalPlayer.Character:FindFirstChildOfClass("Humanoid"):ChangeState("Jumping")
+    local character = game.Players.LocalPlayer.Character
+    if InfiniteJumpEnabled and character then
+        character:FindFirstChildOfClass("Humanoid"):ChangeState("Jumping")
     end
 end)
 
 -- When a new character spawns, reapply the stored states
-game.Players.LocalPlayer.CharacterAdded:Connect(function(char)
+game.Players.LocalPlayer.CharacterAdded:Connect(function(character)
     wait(1)
     toggleSpeed(speedState)
     toggleNoclip(noclipState)
     toggleInfiniteJump(infiniteJumpState)
     toggleGravity(gravityState)
+    toggleGodMode(godModeState)
 end)
 
 -- Update gravity when the user finishes input, if gravity override is active
 local GravityInput = Instance.new("TextBox")
 GravityInput.Name = "GravityInput"
 GravityInput.Parent = ToggleScroll
-GravityInput.Position = UDim2.new(0.7, 0, 0.8, 0)
+GravityInput.Position = UDim2.new(0.7, 0, 0.35, 0)  -- Aligned with Gravity toggle at Y = 0.35
 GravityInput.Size = UDim2.new(0, 80, 0, 30)
 GravityInput.PlaceholderText = "-100-600"
 GravityInput.Text = "100"
@@ -527,7 +614,7 @@ local function createToggleButton(name, position, labelText, color, callback)
     Button.Font = Enum.Font.SourceSansBold
     Button.TextScaled = true
     Button.TextWrapped = true
-    
+
     local Label = Instance.new("TextLabel")
     Label.Parent = ToggleScroll
     Label.Position = UDim2.new(0.5, -50, position.Y.Scale, 0)
@@ -538,7 +625,7 @@ local function createToggleButton(name, position, labelText, color, callback)
     Label.Font = Enum.Font.SourceSansBold
     Label.TextScaled = true
     Label.TextWrapped = true
-    
+
     local toggled = false
     Button.MouseButton1Click:Connect(function()
         toggled = not toggled
@@ -551,11 +638,12 @@ local function createToggleButton(name, position, labelText, color, callback)
 end
 
 -- Create toggle buttons with text color set to slightly dimmed white (RGB 200,200,200)
-createToggleButton("Speed", UDim2.new(0.05, 0, 0.2, 0), "Speed", Color3.fromRGB(200,200,200), toggleSpeed)
-createToggleButton("Noclip", UDim2.new(0.05, 0, 0.4, 0), "Noclip", Color3.fromRGB(200,200,200), toggleNoclip)
-createToggleButton("Jump", UDim2.new(0.05, 0, 0.6, 0), "Infinite Jump", Color3.fromRGB(200,200,200), toggleInfiniteJump)
-createToggleButton("Gravity", UDim2.new(0.05, 0, 0.8, 0), "Gravity", Color3.fromRGB(200,200,200), toggleGravity)
-createToggleButton("InstantInteract", UDim2.new(0.05, 0, 1.0, 0), "Instant Interact", Color3.fromRGB(200,200,200), toggleInstantInteract)
+createToggleButton("Speed", UDim2.new(0.05, 0, 0.05, 0), "Speed", Color3.fromRGB(200,200,200), toggleSpeed)
+createToggleButton("Noclip", UDim2.new(0.05, 0, 0.15, 0), "Noclip", Color3.fromRGB(200,200,200), toggleNoclip)
+createToggleButton("Jump", UDim2.new(0.05, 0, 0.25, 0), "Infinite Jump", Color3.fromRGB(200,200,200), toggleInfiniteJump)
+createToggleButton("Gravity", UDim2.new(0.05, 0, 0.35, 0), "Gravity", Color3.fromRGB(200,200,200), toggleGravity)
+createToggleButton("InstantInteract", UDim2.new(0.05, 0, 0.45, 0), "Instant Interact", Color3.fromRGB(200,200,200), toggleInstantInteract)
+createToggleButton("GodMode", UDim2.new(0.05, 0, 0.55, 0), "God Mode", Color3.fromRGB(200,200,200), toggleGodMode)
 
 -----------------------------------------------
 -- Instant Interact Event (print removed)
