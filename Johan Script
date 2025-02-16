@@ -1,7 +1,9 @@
-warn("Johan Hub By Johan Asian Manik")  -- Warning message on script activation
+if game.Players.LocalPlayer.Name ~= "lynxerjhn" then
+    warn("Johan Hub By Johan Asian Manik")
+end
 
 -----------------------------------------------
--- Create GUI elements
+-- Create GUI Elements
 -----------------------------------------------
 local Hub = Instance.new("ScreenGui")
 local MainFrame = Instance.new("Frame")
@@ -67,7 +69,6 @@ CloseButton.Size = UDim2.new(0, 30, 0, 30)
 CloseButton.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
 CloseButton.TextTransparency = 0.3
 CloseButton.Text = "X"
-
 CloseButton.MouseButton1Click:Connect(function()
     game.Players.LocalPlayer.Character.Humanoid.WalkSpeed = 16
     if Noclip then Noclip:Disconnect() end
@@ -87,30 +88,29 @@ Icon.Size = UDim2.new(0, 50, 0, 50)
 Icon.Text = "☰"
 Icon.Visible = false
 Icon.Draggable = true
-
 Icon.MouseButton1Click:Connect(function()
     MainFrame.Visible = true
     Icon.Visible = false
 end)
 
 -----------------------------------------------
--- Add ScrollingFrame for controls (SpeedInput, Toggle Buttons, Gravity, Instant Interact, God Mode)
+-- Add ScrollingFrame for Controls (Toggles & Inputs)
 -----------------------------------------------
 local ToggleScroll = Instance.new("ScrollingFrame")
 ToggleScroll.Name = "ToggleScroll"
 ToggleScroll.Parent = MainFrame
 ToggleScroll.BackgroundTransparency = 1
--- Position set near the top (Y = 0.225)
+-- Position set near the top
 ToggleScroll.Position = UDim2.new(0, 0, 0.225, 0)
--- Adjust size for a compact grouping (CanvasSize reduced)
+-- Adjusted size to fill remaining area; CanvasSize is reduced for compact grouping
 ToggleScroll.Size = UDim2.new(1, 0, 0.775, 0)
 ToggleScroll.CanvasSize = UDim2.new(0, 0, 0.7, 0)
 ToggleScroll.ScrollBarThickness = 5
 
--- Reposition SpeedInput in ToggleScroll (now at Y = 0.05)
+-- Place SpeedInput inside ToggleScroll
 SpeedInput.Name = "SpeedInput"
 SpeedInput.Parent = ToggleScroll
-SpeedInput.Position = UDim2.new(0.7, 0, 0.05, 0)
+SpeedInput.Position = UDim2.new(0.7, 0, 0.05, 0)  -- Aligned with Speed toggle
 SpeedInput.Size = UDim2.new(0, 80, 0, 30)
 SpeedInput.PlaceholderText = "Speed 1-1000"
 SpeedInput.Text = "75"
@@ -125,8 +125,6 @@ local noclipState = false
 local infiniteJumpState = false
 local gravityState = false
 local instantInteractEnabled = true
-local godModeState = true  -- God Mode enabled by default
-local godModeConnection = nil
 
 -----------------------------------------------
 -- System Toggle & Functions (with Persist State)
@@ -186,51 +184,13 @@ local function toggleGravity(enabled)
         local g = tonumber(GravityInput.Text) or 100
         workspace.Gravity = g
     else
-        workspace.Gravity = 196.2  -- Default gravity
+        workspace.Gravity = 196.2
     end
 end
 
 local function toggleInstantInteract(enabled)
     instantInteractEnabled = enabled
 end
-
-local function toggleGodMode(enabled)
-    godModeState = enabled
-    local character = game.Players.LocalPlayer.Character
-    if character then
-        local humanoid = character:FindFirstChildOfClass("Humanoid")
-        if humanoid then
-            if enabled then
-                if godModeConnection then
-                    godModeConnection:Disconnect()
-                    godModeConnection = nil
-                end
-                godModeConnection = humanoid.HealthChanged:Connect(function(newHealth)
-                    if newHealth < humanoid.MaxHealth then
-                        humanoid.Health = humanoid.MaxHealth
-                    end
-                end)
-                humanoid.Health = humanoid.MaxHealth
-            else
-                if godModeConnection then
-                    godModeConnection:Disconnect()
-                    godModeConnection = nil
-                end
-            end
-        end
-    end
-end
-
--- Continuous enforcement of God Mode using Heartbeat
-game:GetService("RunService").Heartbeat:Connect(function()
-    local character = game.Players.LocalPlayer.Character
-    if character and godModeState then
-        local humanoid = character:FindFirstChildOfClass("Humanoid")
-        if humanoid and humanoid.Health < humanoid.MaxHealth then
-            humanoid.Health = humanoid.MaxHealth
-        end
-    end
-end)
 
 game:GetService("UserInputService").JumpRequest:Connect(function()
     local character = game.Players.LocalPlayer.Character
@@ -239,40 +199,30 @@ game:GetService("UserInputService").JumpRequest:Connect(function()
     end
 end)
 
--- When a new character spawns, reapply the stored states and add the blue circle indicator
+-- Reapply stored states on character respawn
 game.Players.LocalPlayer.CharacterAdded:Connect(function(character)
     wait(1)
     toggleSpeed(speedState)
     toggleNoclip(noclipState)
     toggleInfiniteJump(infiniteJumpState)
     toggleGravity(gravityState)
-    toggleGodMode(godModeState)
-    
-    -- Add a blue circle indicator around the player's HumanoidRootPart to show God Mode is active
-    local hrp = character:FindFirstChild("HumanoidRootPart")
-    if hrp then
-        local billboard = Instance.new("BillboardGui")
-        billboard.Name = "GodModeIndicator"
-        billboard.Parent = hrp
-        billboard.Adornee = hrp
-        billboard.Size = UDim2.new(0, 100, 0, 100)
-        billboard.StudsOffset = Vector3.new(0, 3, 0)
-        billboard.AlwaysOnTop = true
-        local imageLabel = Instance.new("ImageLabel")
-        imageLabel.Parent = billboard
-        imageLabel.Size = UDim2.new(1, 0, 1, 0)
-        imageLabel.BackgroundTransparency = 1
-        -- Replace the asset ID below with an appropriate blue circle image asset
-        imageLabel.Image = "rbxassetid://6031073941"
-        imageLabel.ImageColor3 = Color3.fromRGB(0, 0, 255)
+end)
+
+-- Enforce gravity continuously if override is active
+game:GetService("RunService").Heartbeat:Connect(function()
+    if gravityState then
+        local g = tonumber(GravityInput.Text) or 100
+        if workspace.Gravity ~= g then
+            workspace.Gravity = g
+        end
     end
 end)
 
--- Update gravity when the user finishes input, if gravity override is active
+-- Create Gravity Input Box
 local GravityInput = Instance.new("TextBox")
 GravityInput.Name = "GravityInput"
 GravityInput.Parent = ToggleScroll
-GravityInput.Position = UDim2.new(0.7, 0, 0.35, 0)  -- Aligned with Gravity toggle at Y = 0.35
+GravityInput.Position = UDim2.new(0.7, 0, 0.35, 0)  -- Aligned with Gravity toggle
 GravityInput.Size = UDim2.new(0, 80, 0, 30)
 GravityInput.PlaceholderText = "-100-600"
 GravityInput.Text = "100"
@@ -327,13 +277,12 @@ local function createToggleButton(name, position, labelText, color, callback)
     return Button
 end
 
--- Create toggle buttons with text color set to slightly dimmed white (RGB 200,200,200)
+-- Create toggle buttons with consistent style
 createToggleButton("Speed", UDim2.new(0.05, 0, 0.05, 0), "Speed", Color3.fromRGB(200,200,200), toggleSpeed)
 createToggleButton("Noclip", UDim2.new(0.05, 0, 0.15, 0), "Noclip", Color3.fromRGB(200,200,200), toggleNoclip)
 createToggleButton("Jump", UDim2.new(0.05, 0, 0.25, 0), "Infinite Jump", Color3.fromRGB(200,200,200), toggleInfiniteJump)
 createToggleButton("Gravity", UDim2.new(0.05, 0, 0.35, 0), "Gravity", Color3.fromRGB(200,200,200), toggleGravity)
 createToggleButton("InstantInteract", UDim2.new(0.05, 0, 0.45, 0), "Instant Interact", Color3.fromRGB(200,200,200), toggleInstantInteract)
-createToggleButton("GodMode", UDim2.new(0.05, 0, 0.55, 0), "God Mode", Color3.fromRGB(200,200,200), toggleGodMode)
 
 -----------------------------------------------
 -- Instant Interact Event (print removed)
