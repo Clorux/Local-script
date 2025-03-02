@@ -1,0 +1,168 @@
+{
+    -- Fruits
+    "Apple", "Banana", "Orange", "Strawberry", "Grape", "Watermelon", "Pineapple", "Mango",
+    "Peach", "Pear", "Cherry", "Blueberry", "Raspberry", "Blackberry", "Kiwi", "Lemon",
+    "Lime", "Avocado", "Plum", "Apricot", "Fig", "Date", "Pomegranate", "Cranberry",
+    "Coconut", "Papaya", "Guava", "Passion Fruit", "Dragon Fruit", "Lychee", "Melon",
+
+    -- Animals
+    "Dog", "Cat", "Bird", "Fish", "Lion", "Tiger", "Elephant", "Bear", "Monkey", "Giraffe",
+    "Horse", "Cow", "Pig", "Sheep", "Chicken", "Duck", "Goat", "Rabbit", "Mouse", "Rat",
+    "Snake", "Lizard", "Turtle", "Frog", "Spider", "Ant", "Bee", "Butterfly", "Mosquito",
+    "Fly", "Wolf", "Fox", "Deer", "Owl", "Eagle", "Shark", "Dolphin", "Whale", "Octopus",
+    "Jellyfish", "Starfish", "Crab", "Lobster", "Shrimp", "Penguin", "Seal", "Walrus",
+	"Crocodile", "Gorilla", "Panda", "Kangaroo",
+
+    -- Colors
+    "Red", "Green", "Blue", "Yellow", "Orange", "Purple", "Pink", "Brown", "Black", "White",
+    "Gray", "Cyan", "Magenta", "Lime", "Teal", "Indigo", "Violet", "Silver", "Gold",
+
+    -- Everyday Objects
+    "Table", "Chair", "Bed", "Sofa", "Lamp", "Book", "Pen", "Pencil", "Paper", "Computer",
+    "Phone", "Car", "Bicycle", "Train", "Plane", "Boat", "Clock", "Door", "Window", "Floor",
+    "Wall", "Roof", "Key", "Lock", "Bag", "Wallet", "Shoes", "Shirt", "Pants", "Dress",
+    "Hat", "Coat", "Gloves", "Scarf", "Socks", "Watch", "Glasses", "Mirror", "Towel",
+    "Soap", "Shampoo", "Toothbrush", "Toothpaste", "Comb", "Brush", "Plate", "Bowl", "Cup",
+    "Fork", "Knife", "Spoon", "Bottle", "Box", "Remote", "Headphones", "Charger",
+
+	--Numbers 1 - 100
+	"One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten",
+    "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen", "Twenty",
+    "Twenty-one", "Twenty-two", "Twenty-three", "Twenty-four", "Twenty-five", "Twenty-six", "Twenty-seven", "Twenty-eight", "Twenty-nine", "Thirty",
+    "Thirty-one", "Thirty-two", "Thirty-three", "Thirty-four", "Thirty-five", "Thirty-six", "Thirty-seven", "Thirty-eight", "Thirty-nine", "Forty",
+	"Forty-one", "Forty-two", "Forty-three", "Forty-four", "Forty-five", "Forty-six", "Forty-seven", "Forty-eight", "Forty-nine", "Fifty",
+	"Fifty-one", "Fifty-two", "Fifty-three", "Fifty-four", "Fifty-five", "Fifty-six", "Fifty-seven", "Fifty-eight", "Fifty-nine", "Sixty",
+	"Sixty-one", "Sixty-two", "Sixty-three", "Sixty-four", "Sixty-five", "Sixty-six", "Sixty-seven", "Sixty-eight", "Sixty-nine", "Seventy",
+    "Seventy-one", "Seventy-two", "Seventy-three", "Seventy-four", "Seventy-five", "Seventy-six", "Seventy-seven", "Seventy-eight", "Seventy-nine", "Eighty",
+	"Eighty-one", "Eighty-two", "Eighty-three", "Eighty-four", "Eighty-five", "Eighty-six", "Eighty-seven", "Eighty-eight", "Eighty-nine", "Ninety",
+	"Ninety-one", "Ninety-two", "Ninety-three", "Ninety-four", "Ninety-five", "Ninety-six", "Ninety-seven", "Ninety-eight", "Ninety-nine", "One Hundred",
+
+	--Food
+	 "Bread", "Rice", "Noodles", "Pasta", "Meat", "Chicken", "Beef", "Pork", "Fish", "Egg",
+    "Cheese", "Milk", "Yogurt", "Butter", "Ice Cream", "Cake", "Cookie", "Candy", "Chocolate",
+    "Chips", "Fries", "Pizza", "Burger", "Hot Dog", "Sandwich", "Salad", "Soup", "Stew",
+    "Cereal", "Oatmeal", "Toast", "Pancake", "Waffle", "Donut", "Muffin", "Bagel",
+
+	--Drinks
+	"Water", "Juice", "Soda", "Coffee", "Tea", "Milk", "Smoothie", "Wine", "Beer", "Cocktail",
+
+	--Places
+	 "House", "Apartment", "School", "Office", "Store", "Restaurant", "Park", "Beach", "Mountain",
+    "Forest", "Lake", "River", "Ocean", "City", "Town", "Village", "Country", "Hospital",
+    "Library", "Museum", "Zoo", "Airport", "Train Station", "Bus Stop", "Street", "Road",
+    "Highway", "Bridge", "Building", "Stadium", "Theater", "Cinema", "Hotel", "Bank", "Post Office",
+
+	--Activities
+	 "Run", "Walk", "Jump", "Swim", "Dance", "Sing", "Play", "Read", "Write", "Draw", "Paint",
+    "Study", "Learn", "Teach", "Work", "Sleep", "Eat", "Drink", "Talk", "Listen", "Watch",
+    "Think", "Dream", "Create", "Destroy", "Build", "Fix", "Clean", "Cook", "Drive",
+
+	--Adjectives
+	"Big", "Small", "Tall", "Short", "Long", "Short", "Fast", "Slow", "Good", "Bad", "Happy",
+    "Sad", "Angry", "Scared", "Brave", "Kind", "Mean", "Smart", "Stupid", "Funny", "Serious",
+    "Beautiful", "Ugly", "Rich", "Poor", "Young", "Old", "New", "Old", "Hot", "Cold",
+    "Warm", "Cool", "Wet", "Dry", "Clean", "Dirty", "Easy", "Difficult", "Strong", "Weak",
+    "Loud", "Quiet", "Soft", "Hard", "Light", "Heavy", "Bright", "Dark", "Full", "Empty",
+
+	--Verbs
+	 "Go", "Come", "See", "Hear", "Feel", "Taste", "Smell", "Touch", "Do", "Make", "Have",
+    "Get", "Give", "Take", "Put", "Keep", "Let", "Send", "Say", "Tell", "Ask", "Answer",
+    "Know", "Think", "Believe", "Want", "Need", "Like", "Love", "Hate", "Help", "Use",
+
+	--Pronouns
+	 "I", "You", "He", "She", "It", "We", "They", "Me", "Him", "Her", "Us", "Them",
+    "My", "Your", "His", "Her", "Its", "Our", "Their", "Mine", "Yours", "Hers", "Ours",
+    "Theirs", "This", "That", "These", "Those", "Who", "What", "Which", "Whom", "Whose",
+    "Where", "When", "Why", "How",
+
+	--Conjunctions
+	 "And", "But", "Or", "So", "Because", "If", "Then", "Else", "While", "Although", "Though",
+    "Even though", "Since", "Until", "Unless", "Before", "After", "As", "Than", "That",
+    "Which", "Who", "Whom", "Whose", "Where", "When", "Why", "How",
+
+	 --Prepositions
+	"On", "In", "At", "To", "From", "By", "With", "Without", "Above", "Below", "Under",
+    "Over", "Near", "Far", "Next to", "Between", "Among", "Around", "Through", "Across",
+    "Into", "Out of", "Toward", "Away from", "Up", "Down", "Inside", "Outside",
+
+	--Days of the Week
+	 "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
+
+	--Months
+	"January", "February", "March", "April", "May", "June", "July", "August", "September",
+    "October", "November", "December",
+
+	--Weather
+	 "Sunny", "Cloudy", "Rainy", "Snowy", "Windy", "Stormy", "Foggy", "Hot", "Cold", "Warm",
+    "Cool", "Humid",
+
+	--Professions
+	"Doctor", "Teacher", "Engineer", "Artist", "Writer", "Musician", "Actor", "Athlete", "Chef",
+    "Police Officer", "Firefighter", "Soldier", "Pilot", "Driver", "Farmer", "Scientist", "Programmer",
+    "Accountant", "Lawyer", "Judge", "Politician", "Businessperson", "Salesperson", "Cashier", "Waiter",
+    "Waitress", "Barista", "Bartender", "Hairdresser", "Barber", "Mechanic", "Electrician", "Plumber",
+    "Carpenter", "Gardener", "Cleaner",
+
+    -- Body Parts
+    "Head", "Hair", "Face", "Eye", "Nose", "Mouth", "Ear", "Neck", "Shoulder", "Arm", "Elbow",
+    "Hand", "Finger", "Chest", "Stomach", "Back", "Leg", "Knee", "Foot", "Toe", "Heart", "Brain",
+	"Skin",
+
+	--Emotions
+	"Joy", "Sorrow", "Anger", "Fear", "Love", "Hate", "Surprise", "Disgust", "Trust", "Anticipation",
+    "Interest", "Boredom", "Confusion", "Excitement", "Calmness", "Nervousness", "Confidence", "Doubt",
+    "Hope", "Despair", "Pride", "Shame", "Guilt", "Regret", "Envy", "Jealousy", "Gratitude",
+    "Contentment", "Frustration", "Satisfaction", "Disappointment", "Relief",
+
+    -- Additional random words:
+    "Random", "Example", "Generate", "Thousand", "Words", "Unique", "List", "String", "Array",
+    "Table", "Element", "Data", "Structure", "Collection", "Sequence", "Order", "Randomize",
+    "Shuffle", "Remove", "Display", "Output", "Function", "Method", "Procedure", "Routine",
+    "Algorithm", "Process", "System", "Program", "Application", "Software", "Hardware", "Network",
+    "Internet", "Website", "Database", "Query", "Result", "Information", "Knowledge", "Wisdom",
+     "Courage", "Strength", "Perseverance", "Resilience", "Adaptability", "Innovation", "Creativity",
+     "Imagination", "Curiosity", "Exploration", "Discovery", "Adventure", "Challenge", "Opportunity",
+     "Growth", "Development", "Progress", "Success", "Failure", "Attempt", "Effort", "Persistence",
+     "Strategy", "Tactic", "Solution", "Problem", "Question", "Answer", "Inquiry", "Investigation",
+     "Analysis", "Synthesis", "Evaluation", "Judgment", "Decision", "Choice", "Option", "Alternative",
+     "Perspective", "Viewpoint", "Opinion", "Belief", "Value", "Principle", "Standard", "Criterion",
+     "Measure", "Assessment", "Feedback", "Improvement", "Change", "Transformation", "Transition",
+     "Evolution", "Revolution", "Paradigm", "Shift", "Model", "Framework", "Structure", "Organization",
+     "System", "Process", "Procedure", "Method", "Technique", "Approach", "Strategy", "Plan", "Design",
+     "Implementation", "Execution", "Completion", "Achievement", "Accomplishment", "Result", "Outcome",
+      "Consequence", "Impact", "Effect", "Influence", "Contribution", "Significance", "Importance", "Relevance",
+      "Meaning", "Purpose", "Goal", "Objective", "Target", "Aim", "Intention", "Motivation", "Inspiration",
+      "Aspiration", "Ambition", "Drive", "Passion", "Enthusiasm", "Zeal", "Energy", "Vitality", "Vigor",
+	  "Health", "Wellness", "Fitness", "Exercise", "Activity", "Movement", "Rest", "Relaxation",
+      "Sleep", "Dream", "Vision", "Fantasy", "Reality", "Truth", "Lie", "Deception", "Honesty",
+      "Integrity", "Authenticity", "Genuineness", "Sincerity", "Candor", "Openness", "Transparency",
+      "Vulnerability", "Courage", "Bravery", "Fearlessness", "Boldness", "Audacity", "Daring",
+      "Adventure", "Risk", "Challenge", "Opportunity", "Possibility", "Potential", "Capacity", "Ability",
+       "Skill", "Talent", "Expertise", "Mastery", "Proficiency", "Competence", "Capability",
+       "Resourcefulness", "Ingenuity", "Innovation", "Creativity", "Imagination", "Originality",
+	   "Novelty", "Uniqueness", "Individuality", "Identity", "Personality", "Character", "Trait",
+       "Attribute", "Quality", "Characteristic", "Feature", "Aspect", "Dimension", "Perspective",
+       "Viewpoint", "Stance", "Position", "Approach", "Method", "Technique", "Procedure", "Process",
+        "System", "Structure", "Organization", "Framework", "Model", "Paradigm", "Theory", "Concept",
+        "Idea", "Notion", "Thought", "Consideration", "Reflection", "Contemplation", "Meditation",
+	    "Mindfulness", "Awareness", "Consciousness", "Perception", "Sensation", "Feeling", "Emotion",
+	"Instinct", "Intuition", "Insight", "Understanding", "Comprehension", "Knowledge", "Wisdom",
+	 "Learning", "Education", "Training", "Experience", "Practice", "Repetition", "Habit", "Routine",
+	  "Ritual", "Tradition", "Culture", "Society", "Community", "Relationship", "Connection", "Interaction",
+	  "Communication", "Expression", "Articulation", "Explanation", "Description", "Narration",
+	  "Storytelling", "Dialogue", "Conversation", "Discussion", "Debate", "Argument", "Persuasion",
+	"Negotiation", "Compromise", "Agreement", "Conflict", "Resolution", "Harmony", "Balance", "Stability",
+     "Change", "Transformation", "Transition", "Adaptation", "Growth", "Development", "Evolution",
+    "Progress", "Improvement", "Advancement", "Innovation", "Revolution", "Disruption", "Chaos",
+     "Order", "Structure", "Organization", "System", "Process", "Procedure", "Method", "Technique",
+     "Approach", "Strategy", "Tactic", "Plan", "Design", "Implementation", "Execution", "Completion",
+      "Achievement", "Accomplishment", "Success", "Failure", "Mistake", "Error", "Fault",
+      "Responsibility", "Accountability", "Duty", "Obligation",  "Justice", "Fairness",
+    "Equality", "Liberty", "Freedom", "Right", "Privilege", "Authority", "Power", "Control",
+    "Influence", "Leadership", "Management", "Organization", "Planning", "Coordination",
+	"Cooperation", "Collaboration", "Teamwork", "Partnership", "Alliance", "Friendship",
+     "Family", "Relationship", "Love", "Affection", "Care", "Compassion", "Empathy",
+     "Sympathy", "Kindness", "Generosity", "Altruism", "Selflessness", "Sacrifice",
+	 "Courage", "Bravery", "Valor", "Fortitude", "Resilience", "Determination",
+    "Perseverance",
+}
