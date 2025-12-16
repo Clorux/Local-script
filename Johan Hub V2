@@ -1,0 +1,301 @@
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+local ProximityPromptService = game:GetService("ProximityPromptService")
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+-- Membersihkan GUI lama agar tidak menumpuk
+if playerGui:FindFirstChild("MobileGui") then
+	playerGui.MobileGui:Destroy()
+end
+
+-- --- 1. FUNGSI DRAGGABLE ---
+local function makeDraggable(guiObject)
+	local dragging, dragInput, dragStart, startPos
+
+	local function update(input)
+		local delta = input.Position - dragStart
+		local targetPos = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+		TweenService:Create(guiObject, TweenInfo.new(0.1), {Position = targetPos}):Play()
+	end
+
+	guiObject.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = true
+			dragStart = input.Position
+			startPos = guiObject.Position
+			input.Changed:Connect(function()
+				if input.UserInputState == Enum.UserInputState.End then dragging = false end
+			end)
+		end
+	end)
+
+	guiObject.InputChanged:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+			dragInput = input
+		end
+	end)
+
+	UserInputService.InputChanged:Connect(function(input)
+		if input == dragInput and dragging then update(input) end
+	end)
+end
+
+-- --- 2. SETUP SCREEN GUI & FRAME UTAMA ---
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "MobileGui"
+screenGui.Parent = playerGui
+screenGui.ResetOnSpawn = false
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = "MainFrame"
+mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+mainFrame.Size = UDim2.new(0, 320, 0, 250)
+mainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+mainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
+mainFrame.BorderSizePixel = 0
+mainFrame.Active = true
+mainFrame.Parent = screenGui
+
+local mainCorner = Instance.new("UICorner")
+mainCorner.CornerRadius = UDim.new(0, 12)
+mainCorner.Parent = mainFrame
+
+-- Label Credit & Judul
+local creditLabel = Instance.new("TextLabel")
+creditLabel.Text = "Made By lynxerjhn"
+creditLabel.Font = Enum.Font.Gotham
+creditLabel.BackgroundTransparency = 1
+creditLabel.Size = UDim2.new(1, -80, 0, 15) 
+creditLabel.Position = UDim2.new(0, 12, 0, 32)
+creditLabel.TextXAlignment = Enum.TextXAlignment.Left
+creditLabel.TextSize = 12 
+creditLabel.Parent = mainFrame
+
+local title = Instance.new("TextLabel")
+title.Text = "Johan Hub" 
+title.Font = Enum.Font.GothamBold
+title.TextColor3 = Color3.fromRGB(200, 200, 200)
+title.BackgroundTransparency = 1
+title.Size = UDim2.new(1, -80, 0, 30)
+title.Position = UDim2.new(0, 12, 0, 5) 
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.TextSize = 24
+title.Parent = mainFrame
+
+-- Tombol Close & Minimize
+local closeBtn = Instance.new("TextButton")
+closeBtn.Text = "X"
+closeBtn.TextColor3 = Color3.fromRGB(255, 80, 80)
+closeBtn.BackgroundTransparency = 1 
+closeBtn.Size = UDim2.new(0, 40, 0, 40)
+closeBtn.Position = UDim2.new(1, -45, 0, 5)
+closeBtn.Font = Enum.Font.GothamBold
+closeBtn.TextSize = 24
+closeBtn.Parent = mainFrame
+
+local minBtn = Instance.new("TextButton")
+minBtn.Text = "-"
+minBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+minBtn.BackgroundTransparency = 1
+minBtn.Size = UDim2.new(0, 40, 0, 40)
+minBtn.Position = UDim2.new(1, -85, 0, 5)
+minBtn.Font = Enum.Font.GothamBold
+minBtn.TextSize = 24
+minBtn.Parent = mainFrame
+
+-- Frame Minimize (JH)
+local miniFrame = Instance.new("TextButton")
+miniFrame.Name = "MiniFrame"
+miniFrame.Text = "JH" 
+miniFrame.Font = Enum.Font.GothamBold
+miniFrame.TextSize = 20
+miniFrame.TextColor3 = Color3.fromRGB(255, 255, 255)
+miniFrame.BackgroundColor3 = Color3.fromRGB(0, 170, 255)
+miniFrame.Size = UDim2.new(0, 45, 0, 45) 
+miniFrame.AnchorPoint = Vector2.new(1, 0)
+miniFrame.Position = UDim2.new(0.67, 0, 0.2, 0)
+miniFrame.Visible = false
+miniFrame.Parent = screenGui
+Instance.new("UICorner", miniFrame).CornerRadius = UDim.new(0, 8)
+
+makeDraggable(mainFrame)
+makeDraggable(miniFrame)
+
+-- --- 3. MEMBUAT SCROLLING FRAME ---
+local scrollFrame = Instance.new("ScrollingFrame")
+scrollFrame.Name = "Container"
+scrollFrame.Parent = mainFrame
+scrollFrame.BackgroundTransparency = 1
+scrollFrame.BorderSizePixel = 0
+scrollFrame.Position = UDim2.new(0, 10, 0, 60)
+scrollFrame.Size = UDim2.new(1, -20, 1, -70)
+scrollFrame.ScrollBarThickness = 4
+scrollFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
+
+local layout = Instance.new("UIListLayout")
+layout.Parent = scrollFrame
+layout.SortOrder = Enum.SortOrder.LayoutOrder
+layout.Padding = UDim.new(0, 8)
+
+-- --- 4. FUNGSI PEMBUAT TOGGLE OTOMATIS ---
+local function createToggle(text, callback)
+	local toggleButton = Instance.new("TextButton")
+	toggleButton.Name = text
+	toggleButton.Parent = scrollFrame
+	toggleButton.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+	toggleButton.Size = UDim2.new(1, 0, 0, 40)
+	toggleButton.AutoButtonColor = false
+	toggleButton.Font = Enum.Font.GothamSemibold
+	toggleButton.Text = "   " .. text
+	toggleButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+	toggleButton.TextSize = 14
+	toggleButton.TextXAlignment = Enum.TextXAlignment.Left
+	Instance.new("UICorner", toggleButton).CornerRadius = UDim.new(0, 6)
+
+	local statusBox = Instance.new("Frame")
+	statusBox.Parent = toggleButton
+	statusBox.BackgroundColor3 = Color3.fromRGB(255, 60, 60)
+	statusBox.Size = UDim2.new(0, 20, 0, 20)
+	statusBox.Position = UDim2.new(1, -30, 0.5, -10)
+	Instance.new("UICorner", statusBox).CornerRadius = UDim.new(0, 4)
+	
+	local isOn = false
+	
+	toggleButton.MouseButton1Click:Connect(function()
+		isOn = not isOn
+		
+		if isOn then
+			TweenService:Create(statusBox, TweenInfo.new(0.3), {BackgroundColor3 = Color3.fromRGB(60, 255, 60)}):Play()
+			callback(true)
+		else
+			TweenService:Create(statusBox, TweenInfo.new(0.3), {BackgroundColor3 = Color3.fromRGB(255, 60, 60)}):Play()
+			callback(false)
+		end
+	end)
+end
+
+-- --- 5. MENAMBAHKAN FITUR CHEAT DI SINI ---
+
+-- FITUR 1: Speed Toggle (Looping / Persistent)
+local speedConnection = nil 
+local TARGET_SPEED = 60
+
+createToggle("Super Speed (Loop)", function(state)
+	if state then
+		if speedConnection then speedConnection:Disconnect() end
+		speedConnection = RunService.RenderStepped:Connect(function()
+			if player.Character and player.Character:FindFirstChild("Humanoid") then
+				if player.Character.Humanoid.WalkSpeed ~= TARGET_SPEED then
+					player.Character.Humanoid.WalkSpeed = TARGET_SPEED
+				end
+			end
+		end)
+	else
+		if speedConnection then
+			speedConnection:Disconnect()
+			speedConnection = nil
+		end
+		if player.Character and player.Character:FindFirstChild("Humanoid") then
+			player.Character.Humanoid.WalkSpeed = 16
+		end
+	end
+end)
+
+-- FITUR 2: Infinite Jump Toggle
+local InfiniteJumpEnabled = false
+UserInputService.JumpRequest:Connect(function()
+	if InfiniteJumpEnabled then
+		if player.Character then
+			player.Character:FindFirstChildOfClass('Humanoid'):ChangeState("Jumping")
+		end
+	end
+end)
+
+createToggle("Inf Jump", function(state)
+	InfiniteJumpEnabled = state 
+end)
+
+-- FITUR 3: Gravity Toggle
+createToggle("Low Gravity", function(state)
+	if state then
+		workspace.Gravity = 23
+	else
+		workspace.Gravity = 196.2
+	end
+end)
+
+-- FITUR 4: INSTANT INTERACT
+local interactConnection = nil
+createToggle("Instant Interact", function(state)
+	if state then
+		interactConnection = ProximityPromptService.PromptButtonHoldBegan:Connect(function(prompt)
+			fireproximityprompt(prompt)
+		end)
+	else
+		if interactConnection then
+			interactConnection:Disconnect()
+			interactConnection = nil
+		end
+	end
+end)
+
+-- FITUR 5: NOCLIP (Baru Ditambahkan)
+local noclipConnection = nil
+createToggle("Noclip (Tembus Tembok)", function(state)
+	if state then
+		-- HIDUPKAN NOCLIP
+		-- Putuskan koneksi lama jika ada (untuk safety)
+		if noclipConnection then noclipConnection:Disconnect() end
+		
+		-- Jalankan loop setiap frame agar karakter tetap noclip walau bergerak/animasi
+		noclipConnection = RunService.Stepped:Connect(function()
+			if player.Character then
+				for _, part in ipairs(player.Character:GetDescendants()) do
+					if part:IsA("BasePart") and part.CanCollide then
+						part.CanCollide = false
+					end
+				end
+			end
+		end)
+	else
+		-- MATIKAN NOCLIP
+		if noclipConnection then
+			noclipConnection:Disconnect()
+			noclipConnection = nil
+		end
+		
+		-- Kembalikan collision (supaya tidak jatuh ke void)
+		if player.Character then
+			for _, part in ipairs(player.Character:GetDescendants()) do
+				if part:IsA("BasePart") then
+					part.CanCollide = true
+				end
+			end
+		end
+	end
+end)
+
+-- --- LOGIKA TOMBOL CLOSE & ANIMASI ---
+closeBtn.MouseButton1Click:Connect(function() screenGui:Destroy() end)
+
+minBtn.MouseButton1Click:Connect(function()
+	miniFrame.Position = mainFrame.Position
+	mainFrame.Visible = false
+	miniFrame.Visible = true
+end)
+
+miniFrame.MouseButton1Click:Connect(function()
+	mainFrame.Position = miniFrame.Position
+	miniFrame.Visible = false
+	mainFrame.Visible = true
+end)
+
+local speed = 0.792 
+RunService.RenderStepped:Connect(function()
+	local hue = (tick() * speed) % 1 
+	creditLabel.TextColor3 = Color3.fromHSV(hue, 1, 1) 
+end)
