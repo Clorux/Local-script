@@ -180,11 +180,10 @@ end
 
 -- --- 5. MENAMBAHKAN FITUR CHEAT DI SINI ---
 
--- FITUR 1: Speed Toggle (Looping / Persistent)
 local speedConnection = nil 
-local TARGET_SPEED = 60
+local TARGET_SPEED = 50
 
-createToggle("Super Speed (Loop)", function(state)
+createToggle("Speed Hack (50)", function(state)
 	if state then
 		if speedConnection then speedConnection:Disconnect() end
 		speedConnection = RunService.RenderStepped:Connect(function()
@@ -205,7 +204,32 @@ createToggle("Super Speed (Loop)", function(state)
 	end
 end)
 
--- FITUR 2: Infinite Jump Toggle
+-- 2
+local speedConnection = nil 
+local TARGET_SPEED = 84.251213003
+
+createToggle("Speed Hack (84)", function(state)
+	if state then
+		if speedConnection then speedConnection:Disconnect() end
+		speedConnection = RunService.RenderStepped:Connect(function()
+			if player.Character and player.Character:FindFirstChild("Humanoid") then
+				if player.Character.Humanoid.WalkSpeed ~= TARGET_SPEED then
+					player.Character.Humanoid.WalkSpeed = TARGET_SPEED
+				end
+			end
+		end)
+	else
+		if speedConnection then
+			speedConnection:Disconnect()
+			speedConnection = nil
+		end
+		if player.Character and player.Character:FindFirstChild("Humanoid") then
+			player.Character.Humanoid.WalkSpeed = 16
+		end
+	end
+end)
+
+-- 3
 local InfiniteJumpEnabled = false
 UserInputService.JumpRequest:Connect(function()
 	if InfiniteJumpEnabled then
@@ -219,16 +243,16 @@ createToggle("Inf Jump", function(state)
 	InfiniteJumpEnabled = state 
 end)
 
--- FITUR 3: Gravity Toggle
+-- 4
 createToggle("Low Gravity", function(state)
 	if state then
-		workspace.Gravity = 23
+		workspace.Gravity = 20.251213003
 	else
 		workspace.Gravity = 196.2
 	end
 end)
 
--- FITUR 4: INSTANT INTERACT
+-- 5
 local interactConnection = nil
 createToggle("Instant Interact", function(state)
 	if state then
@@ -243,7 +267,7 @@ createToggle("Instant Interact", function(state)
 	end
 end)
 
--- FITUR 5: NOCLIP (Baru Ditambahkan)
+-- 6
 local noclipConnection = nil
 createToggle("Noclip (Tembus Tembok)", function(state)
 	if state then
