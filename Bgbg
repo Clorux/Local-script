@@ -1617,7 +1617,7 @@ task.spawn(asterBoot)
 -- [SECTION 15] Self-test block (ASTER_SELFTEST flag)
 --============================================================================--
 
-ASTER_SELFTEST = true  -- flip to true to run on next execution
+ASTER_SELFTEST = false  -- flip to true to run on next execution
 
 if ASTER_SELFTEST then
     task.spawn(function()
