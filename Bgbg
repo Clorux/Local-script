@@ -1,0 +1,1676 @@
+--============================================================================--
+-- ASTER_Identity_Config_v4.lua
+-- Local-first identity + config persistence with optional cloud sync and
+-- optional Discord notifications. Single self-contained module. Luau (UNC).
+--============================================================================--
+
+--============================================================================--
+-- [SECTION 1] Config constants
+--============================================================================--
+
+-- Deployment placeholders: leaving them nil gives local-only mode with zero network activity.
+local BACKEND_URL          = nil   -- or "https://your-worker.workers.dev"
+local BACKEND_API_KEY      = nil   -- or a bearer token; Authorization header is ONLY sent when non-nil (BUG-6)
+local DISCORD_HOOK         = nil   -- or "https://discord.com/api/webhooks/..."
+local ASTER_LEGACY_PROFILE = nil   -- or "autoload" (name of one existing ASTER/Configs/*.json profile)
+
+-- Schema / versioning constants.
+local CONFIG_VERSION       = 4     -- current on-disk schema version
+local MODULE_TAG           = "[ASTER v4]"
+
+-- Key-derivation namespaces (two keys, never mixed; device key is metadata only).
+local NS_PUB               = "ASTER.pub.v4|"  -- lookupHash = SHA256(NS_PUB .. UserId); bootstraps the salt
+local NS_ACC               = "ASTER.acc.v4|"  -- userKey    = SHA256(NS_ACC .. UserId .. salt); storage key
+local NS_DEV               = "ASTER.dev.v4|"  -- deviceKey  = SHA256(NS_DEV .. UserId .. rawHwid); METADATA ONLY
+
+-- Storage layout constants.
+local ASTER_ROOT_DIR       = "ASTER"
+local ASTER_IDENTITY_DIR   = ASTER_ROOT_DIR .. "/identity"
+local ASTER_LEGACY_DIR     = ASTER_ROOT_DIR .. "/Configs"
+local LEGACY_MARKER_PATH   = ASTER_IDENTITY_DIR .. "/.legacy_imported"
+local DEVICE_FALLBACK_PATH = ASTER_IDENTITY_DIR .. "/device_fallback.dat"
+local FILE_MAGIC           = "AXC:"   -- file format: "AXC:" .. Base64(XOR(canonicalJSON(envelope), key))
+local SALT_HEX_LEN         = 32       -- 128-bit salt expressed as hex
+
+-- Timing / rate-limit constants.
+local SAVE_DEBOUNCE_SECONDS   = 2.0   -- inactivity debounce on monotonic tick() before save + push (BUG-14)
+local HTTP_TIMEOUT_SECONDS    = 10    -- per-request timeout budget
+local DISCORD_BUCKET_CAPACITY = 2     -- token bucket capacity for Discord notifications
+local DISCORD_REFILL_SECONDS  = 30    -- refill 1 token per 30 seconds
+local USERID_WAIT_SECONDS     = 5     -- LocalPlayer timing guard: wait up to 5s for a non-zero UserId
+
+-- Always-present services (spec §1); localized once for speed.
+local HttpService = game:GetService("HttpService")
+local Players     = game:GetService("Players")
+
+--============================================================================--
+-- [SECTION 2] Pure-Lua SHA-256 (bit32-only, FIPS 180-4 verified)
+--============================================================================--
+
+-- SHA-256 round constants: first 32 bits of the fractional parts of the cube roots of the first 64 primes.
+local SHA256_K = {
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+}
+
+-- SHA-256 initial state: first 32 bits of the fractional parts of the square roots of the first 8 primes.
+local SHA256_H0 = { 0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19 }
+
+-- bytesToHex: encodes a byte string as lowercase hex; no environment assumptions.
+local function bytesToHex(s)
+    return (s:gsub(".", function(c)
+        return string.format("%02x", string.byte(c))
+    end))
+end
+
+-- wordToBEBytes: converts a 32-bit word (as a Lua number) into 4 big-endian bytes; no environment assumptions.
+local function wordToBEBytes(w)
+    local b1 = math.floor(w / 16777216) % 256
+    local b2 = math.floor(w / 65536) % 256
+    local b3 = math.floor(w / 256) % 256
+    local b4 = w % 256
+    return string.char(b1, b2, b3, b4)
+end
+
+-- sha256Pure: FIPS 180-4 SHA-256 over a byte string, returning 64-char lowercase hex; requires only bit32 + string/math.
+local function sha256Pure(msg)
+    local band, bxor, bnot = bit32.band, bit32.bxor, bit32.bnot
+    local rshift, rrotate  = bit32.rshift, bit32.rrotate
+
+    -- Pre-processing: append 0x80, pad with zeros to 56 mod 64, then append the 64-bit big-endian bit length.
+    local bitLen = #msg * 8
+    local padded = msg .. "\128"
+    local padZeros = (56 - (#padded % 64)) % 64
+    padded = padded .. string.rep("\0", padZeros)
+    local lenHi = math.floor(bitLen / 4294967296)
+    local lenLo = bitLen % 4294967296
+    padded = padded .. wordToBEBytes(lenHi) .. wordToBEBytes(lenLo)
+
+    local h0, h1, h2, h3 = SHA256_H0[1], SHA256_H0[2], SHA256_H0[3], SHA256_H0[4]
+    local h4, h5, h6, h7 = SHA256_H0[5], SHA256_H0[6], SHA256_H0[7], SHA256_H0[8]
+    local w = {}
+
+    -- Process the message in successive 64-byte chunks.
+    for chunk = 1, #padded, 64 do
+        for i = 0, 15 do
+            local o = chunk + i * 4
+            local b1, b2, b3, b4 = string.byte(padded, o, o + 3)
+            w[i + 1] = b1 * 16777216 + b2 * 65536 + b3 * 256 + b4
+        end
+        for i = 17, 64 do
+            local x = w[i - 15]
+            local s0 = bxor(rrotate(x, 7), rrotate(x, 18), rshift(x, 3))
+            local y = w[i - 2]
+            local s1 = bxor(rrotate(y, 17), rrotate(y, 19), rshift(y, 10))
+            w[i] = (w[i - 16] + s0 + w[i - 7] + s1) % 4294967296
+        end
+
+        local a, b, c, d = h0, h1, h2, h3
+        local e, f, g, hh = h4, h5, h6, h7
+
+        -- Main compression loop (64 rounds).
+        for i = 1, 64 do
+            local S1 = bxor(rrotate(e, 6), rrotate(e, 11), rrotate(e, 25))
+            local ch = bxor(band(e, f), band(bnot(e), g))
+            local t1 = (hh + S1 + ch + SHA256_K[i] + w[i]) % 4294967296
+            local S0 = bxor(rrotate(a, 2), rrotate(a, 13), rrotate(a, 22))
+            local maj = bxor(band(a, b), band(a, c), band(b, c))
+            local t2 = (S0 + maj) % 4294967296
+            hh = g
+            g = f
+            f = e
+            e = (d + t1) % 4294967296
+            d = c
+            c = b
+            b = a
+            a = (t1 + t2) % 4294967296
+        end
+
+        h0 = (h0 + a) % 4294967296
+        h1 = (h1 + b) % 4294967296
+        h2 = (h2 + c) % 4294967296
+        h3 = (h3 + d) % 4294967296
+        h4 = (h4 + e) % 4294967296
+        h5 = (h5 + f) % 4294967296
+        h6 = (h6 + g) % 4294967296
+        h7 = (h7 + hh) % 4294967296
+    end
+
+    return string.format("%08x%08x%08x%08x%08x%08x%08x%08x", h0, h1, h2, h3, h4, h5, h6, h7)
+end
+
+--============================================================================--
+-- [SECTION 3] Hash normalizer (executor crypt.hash -> fallback to [2])
+--============================================================================--
+
+-- FIX (BUG-5): base64DecodeBytes accumulator is now bounded. Each iteration
+-- previously multiplied `acc` by 64 without ever discarding emitted bits, so
+-- after ~9 base64 chars the accumulator exceeded 2^53 (double precision) and
+-- every subsequent byte decoded to garbage. The appended modulo drops emitted
+-- bits, keeping `acc` under 2^13 — exact in doubles for inputs of any length.
+
+-- base64DecodeBytes: pure-Lua base64 decoder returning a raw byte string, or nil on malformed input; no environment assumptions.
+local function base64DecodeBytes(b64)
+    local alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+    local lookup = {}
+    for i = 1, 64 do
+        lookup[string.byte(alphabet, i)] = i - 1
+    end
+    b64 = b64:gsub("=", "")
+    local out = {}
+    local acc, bits = 0, 0
+    for i = 1, #b64 do
+        local v = lookup[string.byte(b64, i)]
+        if v == nil then
+            return nil
+        end
+        acc = acc * 64 + v
+        bits = bits + 6
+        if bits >= 8 then
+            bits = bits - 8
+            local byte = math.floor(acc / (2 ^ bits)) % 256
+            out[#out + 1] = string.char(byte)
+            acc = acc % (2 ^ bits)   -- drop emitted bits; without this, acc exceeds 2^53 and corrupts output
+        end
+    end
+    return table.concat(out)
+end
+
+-- normalizeDigest: converts a crypt.hash digest (64-hex or base64) to canonical
+-- 64-char lowercase hex; nil on unknown format (BUG-5).
+local function normalizeDigest(out)
+    if type(out) ~= "string" then
+        return nil
+    end
+    -- Hex check first: a 64-char hex string also matches the base64 shape, so order matters.
+    if #out == 64 and out:match("^[0-9a-fA-F]+$") then
+        return out:lower()
+    end
+    -- Base64-shaped output: decode to bytes, then re-encode as lowercase hex;
+    -- a SHA-256 digest must decode to exactly 32 bytes.
+    if #out % 4 == 0 and out:match("^[A-Za-z0-9+/]+=*$") then
+        local raw = base64DecodeBytes(out)
+        if raw and #raw == 32 then
+            return bytesToHex(raw)
+        end
+    end
+    return nil
+end
+
+-- hash: module-wide SHA-256 entry point returning lowercase hex; executor variants
+-- are probed with pcall, pure-Lua is the fallback (BUG-5). Every other section
+-- must call hash() and never crypt.hash directly.
+local function hash(input)
+    input = tostring(input)
+    -- Primary: executor-provided crypt.hash (read global directly, never via _G; BUG-3).
+    local c = crypt
+    if type(c) == "table" and type(c.hash) == "function" then
+        local ok, out = pcall(c.hash, input, "sha256")
+        if ok then
+            local n = normalizeDigest(out)
+            if n then
+                return n
+            end
+        end
+    end
+    -- Secondary: syn.crypt.hash on Synapse-style environments.
+    local s = syn
+    if type(s) == "table" and type(s.crypt) == "table" and type(s.crypt.hash) == "function" then
+        local ok, out = pcall(s.crypt.hash, input, "sha256")
+        if ok then
+            local n = normalizeDigest(out)
+            if n then
+                return n
+            end
+        end
+    end
+    -- Final fallback: pure-Lua SHA-256 from section 2.
+    return sha256Pure(input)
+end
+
+--============================================================================--
+-- [SECTION 4] Canonical JSON encoder (deterministic key order, proper escaping)
+--============================================================================--
+
+-- canonicalQuote: escapes a string per strict JSON rules (control bytes become \u00XX); no environment assumptions.
+local function canonicalQuote(s)
+    local parts = { "\"" }
+    for i = 1, #s do
+        local b = string.byte(s, i)
+        if b == 34 then
+            parts[#parts + 1] = "\\\""
+        elseif b == 92 then
+            parts[#parts + 1] = "\\\\"
+        elseif b == 8 then
+            parts[#parts + 1] = "\\b"
+        elseif b == 9 then
+            parts[#parts + 1] = "\\t"
+        elseif b == 10 then
+            parts[#parts + 1] = "\\n"
+        elseif b == 12 then
+            parts[#parts + 1] = "\\f"
+        elseif b == 13 then
+            parts[#parts + 1] = "\\r"
+        elseif b < 32 then
+            parts[#parts + 1] = string.format("\\u%04x", b)
+        else
+            parts[#parts + 1] = string.char(b)
+        end
+    end
+    parts[#parts + 1] = "\""
+    return table.concat(parts)
+end
+
+-- canonicalNumber: renders integers without ".0" and floats via %.17g; NaN/inf collapse to null; no environment assumptions.
+local function canonicalNumber(n)
+    if n ~= n or n == math.huge or n == -math.huge then
+        return "null"
+    end
+    if n == 0 then
+        return "0"   -- normalize negative zero
+    end
+    if n % 1 == 0 and math.abs(n) < 9007199254740992 then
+        return string.format("%.0f", n)
+    end
+    return string.format("%.17g", n)
+end
+
+-- canonicalEncode: deterministic JSON serialization used for checksums and storage
+-- envelopes (BUG-9); object keys are sorted by byte order, gapless integer-keyed
+-- tables encode as arrays; no environment assumptions.
+local function canonicalEncode(value)
+    local t = type(value)
+    if t == "nil" then
+        return "null"
+    elseif t == "boolean" then
+        return value and "true" or "false"
+    elseif t == "number" then
+        return canonicalNumber(value)
+    elseif t == "string" then
+        return canonicalQuote(value)
+    elseif t ~= "table" then
+        return "null"   -- unsupported types (functions, userdata) serialize as null
+    end
+
+    -- Collect keys and decide array vs object shape.
+    local keys = {}
+    local count = 0
+    for k in pairs(value) do
+        count = count + 1
+        keys[count] = k
+    end
+    if count == 0 then
+        return "{}"   -- empty table encodes as an object
+    end
+
+    local isArray = true
+    local maxIndex = 0
+    for i = 1, count do
+        local k = keys[i]
+        if type(k) ~= "number" or k % 1 ~= 0 or k < 1 then
+            isArray = false
+            break
+        end
+        if k > maxIndex then
+            maxIndex = k
+        end
+    end
+    if maxIndex ~= count then
+        isArray = false   -- any gap in 1..n forces object form
+    end
+
+    local parts = {}
+    if isArray then
+        for i = 1, count do
+            parts[i] = canonicalEncode(value[i])
+        end
+        return "[" .. table.concat(parts, ",") .. "]"
+    end
+
+    -- Deterministic object form: sort keys bytewise via tostring comparison.
+    table.sort(keys, function(a, b)
+        return tostring(a) < tostring(b)
+    end)
+    for i = 1, count do
+        local k = keys[i]
+        parts[i] = canonicalQuote(tostring(k)) .. ":" .. canonicalEncode(value[k])
+    end
+    return "{" .. table.concat(parts, ",") .. "}"
+end
+
+--============================================================================--
+-- [SECTION 5] XOR obfuscation (private copy, does NOT reuse premium.txt's local names)
+--============================================================================--
+
+-- Private obfuscation key for config blobs; deliberately NOT premium.txt's PACKET_IDS_CACHE_OBFUSCATE_KEY (BUG-19).
+local ASTER_CFG_OBFUSCATE_KEY = "A$t3rId3nt1tyCfg_v4"
+
+-- asterXorObfuscate: repeating-key XOR over a byte string (private copy;
+-- deliberately NOT premium.txt's xorObfuscateString); no environment assumptions.
+local function asterXorObfuscate(text, key)
+    key = key or ASTER_CFG_OBFUSCATE_KEY
+    local klen = #key
+    local out = {}
+    for i = 1, #text do
+        local kb = string.byte(key, ((i - 1) % klen) + 1)
+        out[i] = string.char(bit32.bxor(string.byte(text, i), kb))
+    end
+    return table.concat(out)
+end
+
+-- PART 1 END
+
+--============================================================================--
+-- [SECTION 6] Identity builder (two-key scheme + salt bootstrap)
+--============================================================================--
+
+-- Forward declarations resolved in later sections (assigned before any runtime call).
+local cloudGetSalt   -- assigned in [SECTION 11]; fetches salt from backend
+local cloudPutSalt   -- assigned in [SECTION 11]; fire-and-forget salt store
+
+-- Module-level identity state; populated by buildIdentity() during startup wiring.
+local identity = nil
+
+-- safeCall: pcall wrapper that preserves ALL return values via table.pack; returns nil if fn is missing or errored (BUG-12).
+local function safeCall(fn, ...)
+    if type(fn) ~= "function" then
+        return nil
+    end
+    local r = table.pack(pcall(fn, ...))
+    if not r[1] then
+        return nil
+    end
+    return table.unpack(r, 2, r.n)
+end
+
+-- getSharedEnv: shared env table; probes getAsterEnv() then getgenv() then a module-local table, each pcall'd (spec §10).
+local fallbackSharedEnv = {}
+local function getSharedEnv()
+    local a = getAsterEnv
+    if type(a) == "function" then
+        local env = safeCall(a)
+        if type(env) == "table" then
+            return env
+        end
+    end
+    local g = getgenv
+    if type(g) == "function" then
+        local env = safeCall(g)
+        if type(env) == "table" then
+            return env
+        end
+    end
+    return fallbackSharedEnv
+end
+
+-- readTextFile: pcall'd isfile+readfile returning contents or nil; silently nil when file I/O is unavailable (BUG-13 policy).
+local function readTextFile(path)
+    local f = isfile
+    if type(f) ~= "function" then
+        return nil
+    end
+    local ok, exists = pcall(f, path)
+    if not ok or not exists then
+        return nil
+    end
+    local r = readfile
+    if type(r) ~= "function" then
+        return nil
+    end
+    local ok2, data = pcall(r, path)
+    if not ok2 or type(data) ~= "string" then
+        return nil
+    end
+    return data
+end
+
+-- writeTextFile: pcall'd writefile returning success boolean; never errors when file I/O is unavailable.
+local function writeTextFile(path, data)
+    local w = writefile
+    if type(w) ~= "function" then
+        return false
+    end
+    return pcall(w, path, data) == true
+end
+
+-- deleteTextFile: pcall'd delfile; no-op when unavailable.
+local function deleteTextFile(path)
+    local d = delfile
+    if type(d) ~= "function" then
+        return
+    end
+    pcall(d, path)
+end
+
+-- FIX: ensureFolder now falls back to segment-by-segment creation. Some
+-- executors' makefolder does not create parent directories recursively;
+-- calling makefolder("ASTER/identity") on those silently fails when
+-- "ASTER" doesn't already exist, so every subsequent write goes to a
+-- non-existent directory. The primary pcall handles recursive-capable
+-- executors; the fallback handles the rest.
+
+-- ensureFolder: pcall'd makefolder; invoked before EVERY write because the
+-- folder may be wiped mid-session (test 14). Falls back to segment-by-segment
+-- creation for executors whose makefolder does not create parents recursively.
+local function ensureFolder(dir)
+    local m = makefolder
+    if type(m) ~= "function" then
+        return
+    end
+    if pcall(m, dir) then
+        return
+    end
+    -- Non-recursive makefolder: create each path segment in turn.
+    local accumulated = ""
+    for segment in dir:gmatch("[^/]+") do
+        accumulated = (accumulated == "") and segment or (accumulated .. "/" .. segment)
+        pcall(m, accumulated)
+    end
+end
+
+-- randomHex: n lowercase hex chars sourced from HttpService:GenerateGUID entropy (always present); math.random only as last resort.
+local function randomHex(n)
+    local pool = ""
+    local ok, g1 = pcall(function()
+        return HttpService:GenerateGUID(false)
+    end)
+    if ok and type(g1) == "string" then
+        pool = pool .. g1:gsub("-", ""):lower()
+    end
+    local ok2, g2 = pcall(function()
+        return HttpService:GenerateGUID(false)
+    end)
+    if ok2 and type(g2) == "string" then
+        pool = pool .. g2:gsub("-", ""):lower()
+    end
+    if #pool >= n then
+        return pool:sub(1, n)
+    end
+    -- Defensive fallback: GenerateGUID should never fail, but never crash if it does.
+    local out = {}
+    for i = 1, n do
+        out[i] = string.format("%x", math.random(0, 15))
+    end
+    return table.concat(out)
+end
+
+-- detectExecutor: probes identifyexecutor() then getexecutorname(); safeCall preserves the (name, version) pair (BUG-12, test 18).
+local function detectExecutor()
+    local name, version
+    local fn = identifyexecutor
+    if type(fn) == "function" then
+        name, version = safeCall(fn)
+    end
+    if type(name) ~= "string" then
+        version = nil
+        local alt = getexecutorname
+        if type(alt) == "function" then
+            name = safeCall(alt)
+        end
+    end
+    if type(name) ~= "string" or #name == 0 then
+        name = "Unknown"
+    end
+    if type(version) ~= "string" then
+        version = nil
+    end
+    return name, version
+end
+
+-- getRawHwid: probes gethwid / get_hwid via an explicit nil-checked candidate list; NO rawget(_G, ...), NO ipairs over nil-holed tables (BUG-3/BUG-4).
+local function getRawHwid()
+    local candidates = {}
+    local a = gethwid
+    if type(a) == "function" then
+        candidates[#candidates + 1] = a
+    end
+    local b = get_hwid
+    if type(b) == "function" then
+        candidates[#candidates + 1] = b
+    end
+    for i = 1, #candidates do
+        local fn = candidates[i]
+        if type(fn) == "function" then
+            local ok, v = pcall(fn)
+            if ok and type(v) == "string" and #v > 0 then
+                return v
+            end
+            if ok and type(v) == "number" then
+                return tostring(v)
+            end
+        end
+    end
+    return nil
+end
+
+-- loadOrCreateFallbackDeviceId: returns a persisted random device id when no HWID source exists; generated once, reused forever (test 6).
+local function loadOrCreateFallbackDeviceId()
+    local existing = readTextFile(DEVICE_FALLBACK_PATH)
+    if type(existing) == "string" then
+        local trimmed = existing:match("^%s*(.-)%s*$")
+        if #trimmed >= 16 then
+            return trimmed
+        end
+    end
+    local fresh = "fallback-" .. randomHex(32)
+    ensureFolder(ASTER_IDENTITY_DIR)
+    writeTextFile(DEVICE_FALLBACK_PATH, fresh)
+    return fresh
+end
+
+-- saltPathFor: local salt blob location keyed by the FIRST 16 hex chars of lookupHash (BUG-1 layout); no environment assumptions.
+local function saltPathFor(lookupHash)
+    return ASTER_IDENTITY_DIR .. "/salt_" .. lookupHash:sub(1, 16) .. ".dat"
+end
+
+-- loadLocalSalt: reads and validates the locally stored salt for a lookupHash; returns lowercase hex or nil.
+local function loadLocalSalt(lookupHash)
+    local raw = readTextFile(saltPathFor(lookupHash))
+    if type(raw) ~= "string" then
+        return nil
+    end
+    local s = raw:match("^%s*(.-)%s*$")
+    if #s == SALT_HEX_LEN and s:match("^[0-9a-fA-F]+$") then
+        return s:lower()
+    end
+    return nil
+end
+
+-- storeLocalSalt: persists a salt blob locally; folder is (re)created first because it may have been wiped mid-session.
+local function storeLocalSalt(lookupHash, salt)
+    ensureFolder(ASTER_IDENTITY_DIR)
+    writeTextFile(saltPathFor(lookupHash), salt)
+end
+
+-- asterResolveSalt: real salt store replacing the undefined asterFindExistingSalt (BUG-1): local file -> backend GET -> generate + fire-and-forget PUT.
+local function asterResolveSalt(lookupHash)
+    -- 1) Local cache hit.
+    local localSalt = loadLocalSalt(lookupHash)
+    if localSalt then
+        return localSalt
+    end
+    -- 2) Backend lookup (new-device path; only when backend is configured).
+    if type(cloudGetSalt) == "function" then
+        local remote = cloudGetSalt(lookupHash)
+        if type(remote) == "string" and #remote == SALT_HEX_LEN and remote:match("^[0-9a-fA-F]+$") then
+            remote = remote:lower()
+            storeLocalSalt(lookupHash, remote)
+            return remote
+        end
+    end
+    -- 3) Fresh 128-bit salt; stored locally and pushed to the backend fire-and-forget (never blocks startup).
+    local fresh = randomHex(SALT_HEX_LEN)
+    storeLocalSalt(lookupHash, fresh)
+    if type(cloudPutSalt) == "function" then
+        task.spawn(function()
+            pcall(cloudPutSalt, lookupHash, fresh)
+        end)
+    end
+    return fresh
+end
+
+-- buildIdentity: derives lookupHash -> salt -> userKey plus metadata-only deviceKey; performs no blocking network work.
+-- VERIFY (test 8): userKey derives from UserId + salt ONLY; the username is never an input, so a rename keeps the same userKey.
+local function buildIdentity(userId)
+    userId = tonumber(userId) or 0
+    local lookupHash = hash(NS_PUB .. tostring(userId))
+    -- RESIDUAL ENUMERATION RISK (BUG-2, documented and accepted): the salt lookup key depends ONLY on UserId,
+    -- so anyone who knows a victim's UserId AND extracts the "ASTER.pub.v4" namespace string from this script
+    -- can compute lookupHash and retrieve that victim's salt. Acceptable for config sync; NOT for licensing.
+    local userSalt = asterResolveSalt(lookupHash)
+    local userKey = hash(NS_ACC .. tostring(userId) .. userSalt)
+    local rawHwid = getRawHwid()
+    local hwidIsFallback = false
+    if not rawHwid then
+        rawHwid = loadOrCreateFallbackDeviceId()
+        hwidIsFallback = true
+    end
+    -- BUG-16: executor name is NOT inside deviceKey (it caused false new-device alerts); it lives only as identity metadata.
+    local deviceKey = hash(NS_DEV .. tostring(userId) .. rawHwid)
+    local execName, execVersion = detectExecutor()
+    identity = {
+        userId           = userId,
+        lookupHash       = lookupHash,
+        userSalt         = userSalt,
+        userKey          = userKey,     -- cloud lookup key AND local file name
+        deviceKey        = deviceKey,   -- METADATA ONLY, never a storage key
+        hwidIsFallback   = hwidIsFallback,
+        executor         = execName,    -- metadata only
+        executorVersion  = execVersion, -- preserved from identifyexecutor() (test 18)
+    }
+    return identity
+end
+
+-- getIdentity: accessor for the derived identity table; nil until buildIdentity has run.
+local function getIdentity()
+    return identity
+end
+
+--============================================================================--
+-- [SECTION 7] Local storage (save / load / verify / rollback)
+--============================================================================--
+
+-- b64Encode: pcall'd HttpService:Base64Encode; returns nil on failure (HttpService is always present, but never crash).
+local function b64Encode(s)
+    local ok, out = pcall(function()
+        return HttpService:Base64Encode(s)
+    end)
+    if ok and type(out) == "string" then
+        return out
+    end
+    return nil
+end
+
+-- b64Decode: pcall'd HttpService:Base64Decode; returns nil on failure or malformed input.
+local function b64Decode(s)
+    local ok, out = pcall(function()
+        return HttpService:Base64Decode(s)
+    end)
+    if ok and type(out) == "string" then
+        return out
+    end
+    return nil
+end
+
+-- cfgPaths: returns the .dat and .bak paths for a userKey; userKey doubles as the local file name (spec §2.1).
+local function cfgPaths(userKey)
+    local base = ASTER_IDENTITY_DIR .. "/cfg_" .. tostring(userKey)
+    return base .. ".dat", base .. ".bak"
+end
+
+-- FIX: invariant comment added above encodeEnvelope (documented in review).
+-- INVARIANT: every value under data.values must be JSON-safe (gated by
+-- asterConfigSet / legacyImportOnce); non-JSON-safe values canonicalize to
+-- null and would be dropped by JSONDecode on readback, breaking the checksum.
+-- Do not write to liveConfig.values directly; always go through asterConfigSet.
+
+-- encodeEnvelope: wraps data as {sum=SHA256(canonicalEncode(data)), data=...}; checksum NEVER comes from raw JSONEncode (BUG-9).
+local function encodeEnvelope(data)
+    local envelope = {
+        sum  = hash(canonicalEncode(data)),
+        data = data,
+    }
+    local plain = canonicalEncode(envelope)
+    local b64 = b64Encode(asterXorObfuscate(plain, ASTER_CFG_OBFUSCATE_KEY))
+    if not b64 then
+        return nil
+    end
+    return FILE_MAGIC .. b64
+end
+
+-- decodeBlob: validates magic, Base64-decodes, de-XORs, JSON-decodes, and checksum-verifies; returns data or (nil, reason).
+local function decodeBlob(text)
+    if type(text) ~= "string" or text:sub(1, #FILE_MAGIC) ~= FILE_MAGIC then
+        return nil, "bad magic"
+    end
+    local xored = b64Decode(text:sub(#FILE_MAGIC + 1))
+    if not xored then
+        return nil, "base64 decode failed"
+    end
+    local plain = asterXorObfuscate(xored, ASTER_CFG_OBFUSCATE_KEY)
+    local ok, envelope = pcall(function()
+        return HttpService:JSONDecode(plain)
+    end)
+    if not ok or type(envelope) ~= "table" or type(envelope.data) ~= "table" or type(envelope.sum) ~= "string" then
+        return nil, "envelope decode failed"
+    end
+    if hash(canonicalEncode(envelope.data)) ~= envelope.sum:lower() then
+        return nil, "checksum mismatch"
+    end
+    return envelope.data
+end
+
+-- saveConfigBlob: full save pipeline — makefolder, clean-only backup, write, hide, read-back verify, rollback (spec §2.2, BUG-13).
+-- Every environment call is pcall'd; returns true, or (false, reason).
+local function saveConfigBlob(userKey, data)
+    local dat, bak = cfgPaths(userKey)
+    -- Step 1: recreate folder before every write; it may have been wiped mid-session (test 14).
+    ensureFolder(ASTER_IDENTITY_DIR)
+    -- Step 2: back up the current .dat ONLY if it decodes cleanly (BUG-13).
+    local current = readTextFile(dat)
+    if current and decodeBlob(current) ~= nil then
+        writeTextFile(bak, current)
+    end
+    -- Step 3: write the new blob.
+    local blob = encodeEnvelope(data)
+    if not blob then
+        return false, "encode failed"
+    end
+    if not writeTextFile(dat, blob) then
+        return false, "write unavailable"   -- zero file I/O: stay silent, in-memory only
+    end
+    -- Step 4: hide the new .dat if the executor supports it.
+    local h = sethiddenfile
+    if type(h) == "function" then
+        pcall(h, dat, true)
+    end
+    -- Step 5: read back, decode, verify; on failure restore .bak, or delete the corrupt .dat on first save (BUG-13).
+    local written = readTextFile(dat)
+    if written and decodeBlob(written) ~= nil then
+        return true
+    end
+    local bakRaw = readTextFile(bak)
+    if bakRaw and decodeBlob(bakRaw) ~= nil then
+        writeTextFile(dat, bakRaw)
+        return false, "verify failed, restored backup"
+    end
+    deleteTextFile(dat)
+    return false, "verify failed, no backup"
+end
+
+-- loadConfigBlob: loads and verifies .dat; on corruption falls back to a valid .bak (promoting it to .dat);
+-- if both are corrupt both are deleted and defaults apply (tests 2 and 3). Returns data table or nil.
+local function loadConfigBlob(userKey)
+    local dat, bak = cfgPaths(userKey)
+    local raw = readTextFile(dat)
+    if raw then
+        local data = decodeBlob(raw)
+        if data then
+            return data
+        end
+        -- .dat is corrupt: try to recover from .bak.
+        local bakRaw = readTextFile(bak)
+        if bakRaw then
+            local bakData = decodeBlob(bakRaw)
+            if bakData then
+                writeTextFile(dat, bakRaw)   -- promote .bak to .dat (test 2)
+                local h = sethiddenfile
+                if type(h) == "function" then
+                    pcall(h, dat, true)
+                end
+                return bakData
+            end
+            deleteTextFile(bak)              -- both corrupt: delete both (test 3)
+        end
+        deleteTextFile(dat)
+        return nil
+    end
+    -- No .dat: accept a lone valid .bak and promote it.
+    local bakRaw = readTextFile(bak)
+    if bakRaw then
+        local bakData = decodeBlob(bakRaw)
+        if bakData then
+            writeTextFile(dat, bakRaw)
+            return bakData
+        end
+        deleteTextFile(bak)
+    end
+    return nil
+end
+
+--============================================================================--
+-- [SECTION 8] Migration chain + one-time legacy import
+--============================================================================--
+
+-- Forward declaration; assigned in [SECTION 9] before any runtime call.
+local isJsonSafe
+
+-- migrationSteps: ordered schema upgrades keyed by the version they upgrade FROM; each returns the upgraded table.
+local migrationSteps = {
+    -- v1 -> v2: introduce the wrapped-values map; move bare non-reserved top-level keys into it stamped t = 0.
+    [1] = function(raw)
+        raw.values = type(raw.values) == "table" and raw.values or {}
+        for k, v in pairs(raw) do
+            if k ~= "version" and k ~= "values" and k ~= "lastDevice" and k ~= "deviceHistory" then
+                if raw.values[k] == nil then
+                    raw.values[k] = { v = v, t = 0 }
+                end
+                raw[k] = nil
+            end
+        end
+        raw.version = 2
+        return raw
+    end,
+    -- v2 -> v3: introduce device tracking containers.
+    [2] = function(raw)
+        if type(raw.deviceHistory) ~= "table" then
+            raw.deviceHistory = {}
+        end
+        if type(raw.lastDevice) ~= "table" then
+            raw.lastDevice = nil
+        end
+        raw.version = 3
+        return raw
+    end,
+    -- v3 -> v4: introduce the createdAt marker; current schema.
+    [3] = function(raw)
+        if tonumber(raw.createdAt) == nil then
+            raw.createdAt = os.time()
+        end
+        raw.version = 4
+        return raw
+    end,
+}
+
+-- migrateConfig: runs the migration chain to CONFIG_VERSION; warns (never hard-fails) if the chain is incomplete (BUG-20, test 16).
+local function migrateConfig(raw)
+    if type(raw) ~= "table" then
+        raw = {}
+    end
+    raw.version = tonumber(raw.version) or 1
+    local guard = 0
+    while raw.version < CONFIG_VERSION and guard < 16 do
+        local step = migrationSteps[raw.version]
+        if type(step) ~= "function" then
+            break
+        end
+        local ok, out = pcall(step, raw)
+        if not ok or type(out) ~= "table" then
+            break
+        end
+        raw = out
+        guard = guard + 1
+    end
+    if raw.version ~= CONFIG_VERSION then
+        warn(MODULE_TAG .. " Config migration chain incomplete, schema may be stale")
+    end
+    return raw
+end
+
+-- legacyImportOnce: imports EXACTLY ONE legacy profile (ASTER_LEGACY_PROFILE) from ASTER/Configs/*.json, exactly once (BUG-10, test 17).
+-- The marker file is written BEFORE any work so a crash mid-import cannot retrigger it; imported values are stamped t = 0.
+local function legacyImportOnce(data)
+    if ASTER_LEGACY_PROFILE == nil then
+        return data   -- legacy import disabled entirely
+    end
+    if readTextFile(LEGACY_MARKER_PATH) ~= nil then
+        return data   -- already imported in a previous session
+    end
+    ensureFolder(ASTER_IDENTITY_DIR)
+    writeTextFile(LEGACY_MARKER_PATH, "imported_at=" .. tostring(os.time()))   -- marker FIRST (crash-safe)
+    local path = ASTER_LEGACY_DIR .. "/" .. tostring(ASTER_LEGACY_PROFILE) .. ".json"
+    local raw = readTextFile(path)
+    if not raw then
+        return data
+    end
+    local ok, legacy = pcall(function()
+        return HttpService:JSONDecode(raw)
+    end)
+    if not ok or type(legacy) ~= "table" then
+        return data
+    end
+    data.values = type(data.values) == "table" and data.values or {}
+    for k, v in pairs(legacy) do
+        -- t = 0: imported legacy values NEVER outrank real edits in a merge.
+        if data.values[k] == nil and (type(isJsonSafe) ~= "function" or isJsonSafe(v)) then
+            data.values[k] = { v = v, t = 0 }
+        end
+    end
+    return data
+end
+
+--============================================================================--
+-- [SECTION 9] Per-key merge + tolerant accessors + asterConfigSet
+--============================================================================--
+
+-- TODO: tombstones — key deletions currently resurrect through LWW merge; v1 does not implement tombstones (BUG-17).
+
+-- Forward declaration; assigned in [SECTION 11] before any runtime call.
+local markDirty
+
+-- Live in-memory config state (values/version/lastDevice/deviceHistory); survives even with zero file I/O.
+local liveConfig = nil
+
+-- entryT: tolerant timestamp accessor — wrapped entries yield their t, anything else yields 0 (BUG-11, test 20).
+local function entryT(e)
+    return type(e) == "table" and tonumber(e.t) or 0
+end
+
+-- FIX: entryV now uses an explicit nil check instead of the `and/or` idiom.
+-- Lua short-circuit treats a stored boolean `false` as falsy, so
+-- `type(e) == "table" and e.v or e` incorrectly returned the whole wrapper
+-- table for entries like {v = false, t = 100}. That broke asterConfigGet
+-- (returned a truthy table instead of false) and mergeConfigs (wrote nested
+-- envelopes). Fixed with an explicit `e.v ~= nil` check.
+
+-- entryV: tolerant value accessor — wrapped entries yield their v, bare values yield themselves (BUG-11, test 20).
+-- Uses an explicit nil check instead of `and/or`: Lua short-circuit treats a stored boolean `false` as falsy
+-- and would wrongly return the whole wrapper table for entries like {v = false, t = 100}.
+local function entryV(e)
+    if type(e) == "table" and e.v ~= nil then
+        return e.v
+    end
+    return e
+end
+
+-- isJsonSafe: true when value is a string/number/boolean or a table recursively composed of only those (BUG-11); cycle-safe via depth cap.
+isJsonSafe = function(v, depth)
+    depth = depth or 0
+    if depth > 32 then
+        return false
+    end
+    local t = type(v)
+    if t == "string" or t == "boolean" then
+        return true
+    end
+    if t == "number" then
+        return v == v and v ~= math.huge and v ~= -math.huge
+    end
+    if t == "table" then
+        for k, val in pairs(v) do
+            local kt = type(k)
+            if kt ~= "string" and kt ~= "number" then
+                return false
+            end
+            if not isJsonSafe(val, depth + 1) then
+                return false
+            end
+        end
+        return true
+    end
+    return false
+end
+
+-- mergeHistory: unions two deviceHistory arrays deduped by deviceKey, keeping the max seenAt per device (BUG-15, test 19).
+local function mergeHistory(a, b)
+    local byKey, order = {}, {}
+    local function absorb(list)
+        if type(list) ~= "table" then
+            return
+        end
+        for _, e in pairs(list) do
+            if type(e) == "table" and type(e.deviceKey) == "string" then
+                local seenAt = tonumber(e.seenAt) or 0
+                if byKey[e.deviceKey] then
+                    if seenAt > byKey[e.deviceKey].seenAt then
+                        byKey[e.deviceKey].seenAt = seenAt
+                    end
+                else
+                    byKey[e.deviceKey] = { deviceKey = e.deviceKey, executor = e.executor, seenAt = seenAt }
+                    order[#order + 1] = e.deviceKey
+                end
+            end
+        end
+    end
+    absorb(a)
+    absorb(b)
+    local out = {}
+    for i = 1, #order do
+        out[i] = byKey[order[i]]
+    end
+    return out
+end
+
+-- mergeConfigs: per-key last-writer-wins merge by max t over the values map (tests 11, 12); bare values are tolerated via entryT/entryV (test 20).
+local function mergeConfigs(localCfg, remoteCfg)
+    if type(localCfg) ~= "table" then
+        localCfg = {}
+    end
+    if type(remoteCfg) ~= "table" then
+        return localCfg
+    end
+    localCfg.values = type(localCfg.values) == "table" and localCfg.values or {}
+    -- Merge the wrapped values map; higher t wins, ties keep the local entry.
+    if type(remoteCfg.values) == "table" then
+        for k, re in pairs(remoteCfg.values) do
+            local le = localCfg.values[k]
+            if le == nil or entryT(re) > entryT(le) then
+                localCfg.values[k] = { v = entryV(re), t = entryT(re) }
+            end
+        end
+    end
+    -- Tolerate a flat remote map: non-reserved top-level keys are treated as value entries (bare numbers included; test 20).
+    for k, re in pairs(remoteCfg) do
+        if k ~= "values" and k ~= "version" and k ~= "lastDevice" and k ~= "deviceHistory" and k ~= "createdAt" then
+            local le = localCfg.values[k]
+            if le == nil or entryT(re) > entryT(le) then
+                localCfg.values[k] = { v = entryV(re), t = entryT(re) }
+            end
+        end
+    end
+    -- Schema version: keep the higher one.
+    if (tonumber(remoteCfg.version) or 0) > (tonumber(localCfg.version) or 0) then
+        localCfg.version = tonumber(remoteCfg.version)
+    end
+    -- Device history: union deduped by deviceKey (BUG-15).
+    localCfg.deviceHistory = mergeHistory(localCfg.deviceHistory, remoteCfg.deviceHistory)
+    -- lastDevice is local-session metadata; adopt remote's only if we have none.
+    if type(localCfg.lastDevice) ~= "table" and type(remoteCfg.lastDevice) == "table" then
+        localCfg.lastDevice = remoteCfg.lastDevice
+    end
+    return localCfg
+end
+
+-- asterConfigSet: validates JSON-safety, wraps as {v=value, t=os.time()}, writes to the live config, and marks the debounce dirty (BUG-11).
+local function asterConfigSet(key, value)
+    if type(key) ~= "string" or #key == 0 then
+        return false, "bad key"
+    end
+    if not isJsonSafe(value) then
+        return false, "value is not JSON-safe"
+    end
+    if type(liveConfig) ~= "table" then
+        return false, "config not initialized"
+    end
+    liveConfig.values = type(liveConfig.values) == "table" and liveConfig.values or {}
+    liveConfig.values[key] = { v = value, t = os.time() }
+    if type(markDirty) == "function" then
+        markDirty()
+    end
+    return true
+end
+
+-- asterConfigGet: tolerant unwrapped read from the live config; returns default when the key or config is absent.
+local function asterConfigGet(key, default)
+    if type(liveConfig) ~= "table" or type(liveConfig.values) ~= "table" then
+        return default
+    end
+    local e = liveConfig.values[key]
+    if e == nil then
+        return default
+    end
+    return entryV(e)
+end
+
+--============================================================================--
+-- [SECTION 10] HTTP layer (token bucket, 429 backoff, timeout)
+--============================================================================--
+
+-- getRequestFn: resolves the executor HTTP function by reading globals DIRECTLY (never rawget(_G, ...)), in this priority order (BUG-3).
+local function getRequestFn()
+    local r = request
+    if type(r) == "function" then
+        return r
+    end
+    local hr = http_request
+    if type(hr) == "function" then
+        return hr
+    end
+    local s = syn
+    if type(s) == "table" and type(s.request) == "function" then
+        return s.request
+    end
+    local f = fluxus
+    if type(f) == "table" and type(f.request) == "function" then
+        return f.request
+    end
+    local h = http
+    if type(h) == "table" and type(h.request) == "function" then
+        return h.request
+    end
+    return nil
+end
+
+-- httpEnabled: true when any executor HTTP function exists; when false the module is silently local-only (test 5).
+local function httpEnabled()
+    return getRequestFn() ~= nil
+end
+
+-- backendConfigured: true only when BACKEND_URL is set and is NOT the placeholder; plain find with `true` (Lua pattern gotcha, BUG-7).
+local function backendConfigured()
+    if type(BACKEND_URL) ~= "string" or #BACKEND_URL == 0 then
+        return false
+    end
+    if BACKEND_URL:find("your-worker", 1, true) then
+        return false
+    end
+    return true
+end
+
+-- httpRequest: single low-level request entry; attaches Authorization ONLY when BACKEND_API_KEY is non-nil (BUG-6); returns response table or nil.
+local function httpRequest(method, url, body)
+    local req = getRequestFn()
+    if not req then
+        return nil
+    end
+    local headers = { ["Content-Type"] = "application/json" }
+    if BACKEND_API_KEY ~= nil then
+        headers["Authorization"] = "Bearer " .. tostring(BACKEND_API_KEY)
+    end
+    local args = { Url = url, Method = method, Headers = headers }
+    if body ~= nil then
+        args.Body = body
+    end
+    local ok, resp = pcall(req, args)
+    if not ok or type(resp) ~= "table" then
+        return nil
+    end
+    return resp
+end
+
+-- httpRequestTimed: soft timeout wrapper — the request runs on a worker thread and is abandoned after HTTP_TIMEOUT_SECONDS (monotonic tick).
+local function httpRequestTimed(method, url, body)
+    local done = false
+    local result = nil
+    task.spawn(function()
+        result = httpRequest(method, url, body)
+        done = true
+    end)
+    local deadline = tick() + HTTP_TIMEOUT_SECONDS
+    while not done and tick() < deadline do
+        task.wait(0.05)
+    end
+    if not done then
+        return nil   -- timed out; the worker thread is abandoned harmlessly
+    end
+    return result
+end
+
+-- httpJson: JSON convenience layer returning (statusCode, decodedBody, rawResponse); nil status means transport failure.
+local function httpJson(method, url, payload)
+    local body = nil
+    if payload ~= nil then
+        local ok, enc = pcall(function()
+            return HttpService:JSONEncode(payload)
+        end)
+        if not ok then
+            return nil
+        end
+        body = enc
+    end
+    local resp = httpRequestTimed(method, url, body)
+    if not resp then
+        return nil
+    end
+    local status = tonumber(resp.StatusCode or resp.Status or resp.status_code) or 0
+    local decoded = nil
+    if type(resp.Body) == "string" and #resp.Body > 0 then
+        pcall(function()
+            decoded = HttpService:JSONDecode(resp.Body)
+        end)
+    end
+    return status, decoded, resp
+end
+
+-- Token bucket state (used by Discord notifications): capacity 2, refill 1 token per 30 seconds (spec §2.5).
+local bucketTokens = DISCORD_BUCKET_CAPACITY
+local bucketLastRefill = tick()
+
+-- bucketRefill: adds tokens earned since the last refill based on monotonic elapsed time; no environment assumptions.
+local function bucketRefill()
+    local now = tick()
+    local elapsed = now - bucketLastRefill
+    if elapsed >= DISCORD_REFILL_SECONDS then
+        local earned = math.floor(elapsed / DISCORD_REFILL_SECONDS)
+        bucketTokens = math.min(DISCORD_BUCKET_CAPACITY, bucketTokens + earned)
+        bucketLastRefill = bucketLastRefill + earned * DISCORD_REFILL_SECONDS
+    end
+end
+
+-- bucketTake: consumes one token if available after refill; returns true/false; no environment assumptions.
+local function bucketTake()
+    bucketRefill()
+    if bucketTokens >= 1 then
+        bucketTokens = bucketTokens - 1
+        return true
+    end
+    return false
+end
+
+-- Discord 429 backoff state: monotonic timestamp until which Discord sends are suppressed (spec §2.5).
+local discordBackoffUntil = 0
+
+-- readRetryAfter: extracts the Retry-After header (any header-key casing) from a 429 response; returns seconds or nil (test 13).
+local function readRetryAfter(resp)
+    if type(resp) ~= "table" then
+        return nil
+    end
+    local h = resp.Headers or resp.headers
+    if type(h) ~= "table" then
+        return nil
+    end
+    for k, v in pairs(h) do
+        if tostring(k):lower() == "retry-after" then
+            return tonumber(v)
+        end
+    end
+    return nil
+end
+
+-- PART 2 END
+
+--============================================================================--
+-- [SECTION 11] Cloud sync (pull / push / salt bootstrap)
+--============================================================================--
+
+-- Cloud gate for the UserId==0 case (test 15): asterBoot sets this BEFORE
+-- buildIdentity; 0 suppresses ALL cloud calls, including the salt bootstrap
+-- inside asterResolveSalt (which runs during identity derivation).
+local bootSyncUserId = nil
+
+-- cloudGetSalt: GET /salt/<lookupHash> per the backend contract (§2.4);
+-- returns the salt string or nil on any failure. Assigned to the forward
+-- declaration from [SECTION 6]; only ever called from task.spawn'd contexts.
+cloudGetSalt = function(lookupHash)
+    if bootSyncUserId == 0 then
+        return nil   -- UserId never resolved: no network at all (test 15)
+    end
+    if not backendConfigured() or not httpEnabled() then
+        return nil
+    end
+    local status, body = httpJson("GET", BACKEND_URL .. "/salt/" .. tostring(lookupHash))
+    if status == 200 and type(body) == "table" and type(body.salt) == "string" then
+        return body.salt
+    end
+    return nil
+end
+
+-- cloudPutSalt: PUT /salt/<lookupHash> per the backend contract (§2.4);
+-- fire-and-forget at the call site, but this function itself is blocking
+-- (it wraps httpJson). Callers that need non-blocking behavior should
+-- task.spawn it. Failures are silent.
+cloudPutSalt = function(lookupHash, salt)
+    if bootSyncUserId == 0 then
+        return   -- UserId never resolved: no network at all (test 15)
+    end
+    if not backendConfigured() or not httpEnabled() then
+        return
+    end
+    httpJson("PUT", BACKEND_URL .. "/salt/" .. tostring(lookupHash), { salt = salt })
+end
+
+-- cloudPull: GET /pull?k=<userKey> per the backend contract; the query
+-- carries ONLY the key (uid removed, BUG-8). Returns dataTable or nil.
+-- Only called from task.spawn'd async contexts (asterBoot's thread).
+local function cloudPull(userKey)
+    if not backendConfigured() or not httpEnabled() then
+        return nil
+    end
+    local status, body = httpJson("GET", BACKEND_URL .. "/pull?k=" .. tostring(userKey))
+    if status == 200 and type(body) == "table" and type(body.data) == "table" then
+        return body.data, tonumber(body.updatedAt)
+    end
+    return nil
+end
+
+-- cloudPush: POST /push {k, data, device} per the backend contract; spawns
+-- its own worker so the caller never blocks.
+local function cloudPush(userKey, data, deviceKey)
+    if not backendConfigured() or not httpEnabled() then
+        return
+    end
+    task.spawn(function()
+        httpJson("POST", BACKEND_URL .. "/push", {
+            k      = userKey,
+            data   = data,
+            device = deviceKey,   -- metadata only, never a storage key (§2.1)
+        })
+    end)
+end
+
+-- Debounce state for the 2-second-inactivity save (BUG-14); tick() is
+-- monotonic, so wall-clock changes cannot break it.
+local savePending  = false
+local saveDeadline = 0
+
+-- markDirty: (re)arms the 2-second-inactivity debounce; assigned to the
+-- forward declaration from [SECTION 9].
+markDirty = function()
+    savePending  = true
+    saveDeadline = tick() + SAVE_DEBOUNCE_SECONDS
+end
+
+-- flushSaveIfDue: heartbeat callback — once the debounce deadline passes,
+-- save locally then async push (spec §2.3).
+local function flushSaveIfDue()
+    if not savePending or tick() < saveDeadline then
+        return
+    end
+    savePending = false
+    if type(liveConfig) ~= "table" or type(identity) ~= "table" then
+        return
+    end
+    saveConfigBlob(identity.userKey, liveConfig)
+    if identity.userId ~= 0 then
+        cloudPush(identity.userKey, liveConfig, identity.deviceKey)
+    end
+end
+
+-- noteDeviceBoot: refreshes lastDevice and deviceHistory; entries are
+-- deduped by deviceKey with seenAt updated in place (BUG-15, test 19).
+-- Returns true when lastDevice.deviceKey differs from the current deviceKey
+-- — the spec §2.3 new-device condition. Mutates cfg in place.
+local function noteDeviceBoot(cfg, id)
+    cfg.deviceHistory = type(cfg.deviceHistory) == "table" and cfg.deviceHistory or {}
+    local now = os.time()
+    local isNewDevice = (type(cfg.lastDevice) ~= "table")
+        or (cfg.lastDevice.deviceKey ~= id.deviceKey)
+    local found = false
+    for _, e in pairs(cfg.deviceHistory) do
+        if type(e) == "table" and e.deviceKey == id.deviceKey then
+            e.seenAt   = now           -- existing entry: refresh seenAt, do NOT append
+            e.executor = id.executor
+            found = true
+        end
+    end
+    if not found then
+        cfg.deviceHistory[#cfg.deviceHistory + 1] =
+            { deviceKey = id.deviceKey, executor = id.executor, seenAt = now }
+    end
+    cfg.lastDevice = { deviceKey = id.deviceKey, executor = id.executor, seenAt = now }
+    return isNewDevice
+end
+
+-- cloudBootSync: async boot sync per spec §2.3 — pull, per-key LWW merge
+-- into liveConfig, save local. Silently skipped when the backend is a
+-- placeholder/nil or HTTP is unavailable (tests 4, 5, 10). Runs only inside
+-- the boot thread.
+--
+-- FIX: the salt heal PUT is now fire-and-forget. Previously it blocked for
+-- up to one HTTP timeout (10s), which stacked on top of the pull's timeout
+-- to stall asterBoot for 20s on a slow/flaky connection. The PUT is
+-- idempotent and its result is not needed for the pull that follows.
+local function cloudBootSync()
+    if not backendConfigured() or not httpEnabled() then
+        return
+    end
+    if type(identity) ~= "table" or type(liveConfig) ~= "table" then
+        return
+    end
+    -- Idempotent salt upsert (heals a PUT that silently failed earlier).
+    task.spawn(function()
+        pcall(cloudPutSalt, identity.lookupHash, identity.userSalt)
+    end)
+    -- Pull is synchronous so the merge lands before asterBoot returns.
+    local remote = cloudPull(identity.userKey)
+    if type(remote) == "table" then
+        mergeConfigs(liveConfig, remote)
+        saveConfigBlob(identity.userKey, liveConfig)
+    end
+end
+
+--============================================================================--
+-- [SECTION 12] Discord notify (hash-prefix-only)
+--============================================================================--
+
+-- discordEnabled: notifications are no-ops unless DISCORD_HOOK is set AND
+-- an HTTP function exists (spec §2.5).
+local function discordEnabled()
+    return type(DISCORD_HOOK) == "string" and #DISCORD_HOOK > 0 and httpEnabled()
+end
+
+-- notifyDiscord: one-way notification carrying truncated hash tags ONLY
+-- (spec §2.5). NEVER sends raw UserId, raw HWID, or config contents; the
+-- username is included ONLY when opts.includeUsername == true (BUG-18).
+-- Rate limited by the [SECTION 10] token bucket (2 burst, refill 1/30s);
+-- on HTTP 429 reads Retry-After, backs off, retries once (test 13).
+local function notifyDiscord(event, fields, opts)
+    if not discordEnabled() or type(identity) ~= "table" then
+        return
+    end
+    if tick() < discordBackoffUntil then
+        return   -- inside a 429 backoff window: drop silently
+    end
+    if not bucketTake() then
+        return   -- rate limited: drop silently (do NOT set backoff; caller unaware is OK)
+    end
+    opts = type(opts) == "table" and opts or {}
+    local id = identity
+    local lines = {
+        "[ASTER v4] " .. tostring(event),
+        "userTag: "   .. id.userKey:sub(1, 12),    -- first 12 hex of userKey ONLY
+        "deviceTag: " .. id.deviceKey:sub(1, 12),  -- first 12 hex of deviceKey ONLY
+        "executor: "  .. tostring(id.executor),
+    }
+    if type(fields) == "table" then
+        for k, v in pairs(fields) do
+            local tv = type(v)
+            if tv == "string" or tv == "number" or tv == "boolean" then
+                lines[#lines + 1] = tostring(k) .. ": " .. tostring(v)
+            end
+        end
+    end
+    if opts.includeUsername == true then
+        local lp = Players.LocalPlayer
+        if lp then
+            lines[#lines + 1] = "username: " .. tostring(lp.Name)
+        end
+    end
+    local payload = { content = table.concat(lines, "\n") }
+    task.spawn(function()
+        local status, _, resp = httpJson("POST", DISCORD_HOOK, payload)
+        if status == 429 then
+            local retryAfter = math.min(readRetryAfter(resp) or 5, 120)
+            discordBackoffUntil = tick() + retryAfter
+            task.wait(retryAfter)   -- back off per Retry-After, then retry exactly once
+            local status2, _, resp2 = httpJson("POST", DISCORD_HOOK, payload)
+            if status2 == 429 then
+                local again = math.min(readRetryAfter(resp2) or 5, 120)
+                discordBackoffUntil = tick() + again   -- still limited: extend, give up
+            end
+        end
+    end)
+end
+
+--============================================================================--
+-- [SECTION 13] Public API
+--============================================================================--
+
+-- Host integration references supplied via asterInit; default to internal
+-- stubs (spec §10). Never required to be non-nil.
+local hostSettings   = {}
+local hostUIRegistry = nil
+
+-- ASTER_API: the public surface; published into the shared env as
+-- __ASTER_IDENTITY_V4 by [SECTION 14].
+local ASTER_API = {}
+
+-- asterInit: accepts premium.txt's settings table and UI registry (or nil);
+-- works standalone with internal stubs (spec §10).
+function ASTER_API.asterInit(settingsTable, uiRegistryOrNil)
+    hostSettings   = type(settingsTable) == "table" and settingsTable or {}
+    hostUIRegistry = type(uiRegistryOrNil) == "table" and uiRegistryOrNil or nil
+    return ASTER_API
+end
+
+-- ASTER_API.get: tolerant unwrapped config read; returns default when the
+-- key is absent or config not yet loaded.
+function ASTER_API.get(key, default)
+    return asterConfigGet(key, default)
+end
+
+-- ASTER_API.set: validated JSON-safe write wrapped as {v, t=os.time()};
+-- the 2s debounce then saves locally and pushes async (BUG-11/BUG-14).
+function ASTER_API.set(key, value)
+    return asterConfigSet(key, value)
+end
+
+-- ASTER_API.saveNow: immediate local save + async push, bypassing the
+-- debounce; returns local-save success.
+function ASTER_API.saveNow()
+    if type(liveConfig) ~= "table" or type(identity) ~= "table" then
+        return false
+    end
+    local ok = saveConfigBlob(identity.userKey, liveConfig)
+    if identity.userId ~= 0 then
+        cloudPush(identity.userKey, liveConfig, identity.deviceKey)
+    end
+    return ok == true
+end
+
+-- ASTER_API.identity: returns identity metadata (hash tags, executor info);
+-- NEVER includes the raw HWID or config contents.
+function ASTER_API.identity()
+    local id = identity
+    if type(id) ~= "table" then
+        return nil
+    end
+    return {
+        userId          = id.userId,
+        userKey         = id.userKey,
+        deviceKey       = id.deviceKey,
+        lookupHash      = id.lookupHash,
+        userTag         = id.userKey:sub(1, 12),
+        deviceTag       = id.deviceKey:sub(1, 12),
+        executor        = id.executor,
+        executorVersion = id.executorVersion,
+        hwidIsFallback  = id.hwidIsFallback,
+    }
+end
+
+-- ASTER_API.notify: fires a one-way hash-prefix-only Discord notification;
+-- no-op when DISCORD_HOOK is nil (spec §2.5).
+function ASTER_API.notify(event, fields, opts)
+    notifyDiscord(event, fields, opts)
+end
+
+-- publishApi: publishes the API into the shared env — getAsterEnv() first,
+-- getgenv() fallback, module-local last resort (spec §10). Attaches to
+-- premium.txt's __ASTER_RUNTIME only if it already exists (probed, never
+-- assumed).
+local function publishApi()
+    local env = getSharedEnv()
+    env.__ASTER_IDENTITY_V4 = ASTER_API
+    if type(env.__ASTER_RUNTIME) == "table" then
+        env.__ASTER_RUNTIME.identityConfigV4 = ASTER_API
+    end
+end
+
+--============================================================================--
+-- [SECTION 14] Startup wiring
+--============================================================================--
+
+-- startHeartbeat: drives the save debounce via premium.txt's
+-- registerHeartbeatUpdate when present, else RunService.Heartbeat directly
+-- (spec §10).
+local function startHeartbeat()
+    local r = registerHeartbeatUpdate
+    if type(r) == "function" then
+        local ok = pcall(r, "ASTER_IDENTITY_CFG_V4", flushSaveIfDue)
+        if ok then
+            return
+        end
+    end
+    pcall(function()
+        game:GetService("RunService").Heartbeat:Connect(flushSaveIfDue)
+    end)
+end
+
+-- asterBoot: full startup sequence; runs inside task.spawn so salt/config
+-- network work NEVER blocks the caller (spec §2.3).
+--
+-- FIX (two related issues):
+--   1. legacyImportOnce writes a GLOBAL marker file (ASTER/identity/.legacy_imported).
+--      Previously it ran unconditionally. If LocalPlayer failed to resolve
+--      (userId == 0), the marker was written against a placeholder session,
+--      permanently poisoning the one-shot import for every future real session.
+--      Now gated under syncAllowed.
+--   2. saveConfigBlob / notifyDiscord / cloudBootSync all have persistent or
+--      network side effects and were only partially gated. Consolidated under
+--      a single syncAllowed block so userId == 0 stays fully offline and
+--      in-memory (test 15).
+local function asterBoot()
+    -- Test 15: UserId == 0 (LocalPlayer timing) — wait up to
+    -- USERID_WAIT_SECONDS, then continue local-only and skip ALL side effects.
+    local lp = Players.LocalPlayer
+    local userId = (lp and lp.UserId) or 0
+    local waitStart = tick()
+    while userId == 0 and (tick() - waitStart) < USERID_WAIT_SECONDS do
+        task.wait(0.1)
+        lp = Players.LocalPlayer
+        userId = (lp and lp.UserId) or 0
+    end
+    bootSyncUserId = userId   -- [SECTION 11] gate: when still 0, stay offline
+    local syncAllowed = (userId ~= 0)
+
+    local id = buildIdentity(userId)   -- may GET /salt on a new device; safe here
+    -- Load local config (corruption recovery and backup promotion live in
+    -- loadConfigBlob, tests 2, 3); fresh installs get defaults (test 1).
+    local cfg = loadConfigBlob(id.userKey)
+    if type(cfg) ~= "table" then
+        cfg = { version = CONFIG_VERSION, values = {}, deviceHistory = {}, createdAt = os.time() }
+    end
+    cfg = migrateConfig(cfg)       -- v1 -> v4 chain, warns if incomplete (BUG-20, test 16)
+
+    -- Legacy import has a permanent global marker side effect; only run it
+    -- on a real (non-placeholder) session.
+    if syncAllowed then
+        cfg = legacyImportOnce(cfg)
+    end
+
+    cfg.values         = type(cfg.values) == "table" and cfg.values or {}
+    cfg.deviceHistory  = type(cfg.deviceHistory) == "table" and cfg.deviceHistory or {}
+    liveConfig = cfg
+
+    -- Device tracking runs unconditionally (in-memory only when userId == 0;
+    -- the save below is what persists it).
+    local isNewDevice = noteDeviceBoot(cfg, id)
+
+    if syncAllowed then
+        saveConfigBlob(id.userKey, cfg)
+        if isNewDevice then
+            -- Truncated hash tags only; no-op when DISCORD_HOOK is nil (test 9).
+            notifyDiscord("new_device", {
+                deviceCount  = #cfg.deviceHistory,
+                hwidFallback = id.hwidIsFallback,
+            })
+        end
+        cloudBootSync()   -- async pull -> merge -> save local; skipped if unconfigured
+    end
+    -- Without a backend, a new device simply cannot see configs from other
+    -- devices: documented limitation (test 10).
+end
+
+-- Wire-up: publish the API, start the debounce heartbeat, then boot
+-- asynchronously — startup never blocks on network.
+publishApi()
+startHeartbeat()
+task.spawn(asterBoot)
+
+--============================================================================--
+-- [SECTION 15] Self-test block (ASTER_SELFTEST flag)
+--============================================================================--
+
+ASTER_SELFTEST = false  -- flip to true to run on next execution
+
+if ASTER_SELFTEST then
+    task.spawn(function()
+        local function check(name, cond)
+            print(("[ASTER v4 SELFTEST] %s: %s"):format(name, cond and "PASS" or "FAIL"))
+        end
+
+        -- 1. SHA-256 known vector
+        check("sha256_abc",
+            hash("abc") == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+
+        -- 2. Canonical encode stability
+        local a = canonicalEncode({ b = 2, a = 1 })
+        local b = canonicalEncode({ a = 1, b = 2 })
+        check("canonical_stable", a == b)
+
+        -- 3. Round-trip save/load on a scratch key (cleaned up afterwards)
+        local testKey  = "selftest_" .. randomHex(8)
+        local snapshot = {
+            version = CONFIG_VERSION,
+            values  = { st = { v = "roundtrip", t = 123 } },
+            deviceHistory = {},
+        }
+        local savedOk = saveConfigBlob(testKey, snapshot)
+        local loaded  = loadConfigBlob(testKey)
+        check("save_load_roundtrip",
+            savedOk == true and type(loaded) == "table"
+            and loaded.values.st.v == "roundtrip"
+            and loaded.values.st.t == 123)
+
+        -- 4. Corruption recovery: corrupt .dat + valid .bak loads .bak (test 2)
+        local datPath, bakPath = cfgPaths(testKey)
+        writeTextFile(bakPath, encodeEnvelope(snapshot))
+        writeTextFile(datPath, "AXC:corrupted-not-base64!!")
+        local recovered = loadConfigBlob(testKey)
+        check("corruption_recovery",
+            type(recovered) == "table" and recovered.values.st.v == "roundtrip")
+        deleteTextFile(datPath)
+        deleteTextFile(bakPath)
+
+        -- 5. Merge per-key LWW: higher t wins; stored boolean false survives
+        local merged = mergeConfigs(
+            { values = { k = { v = "old", t = 1 }, f = { v = true,  t = 1 } } },
+            { values = { k = { v = "new", t = 2 }, f = { v = false, t = 2 } } })
+        check("merge_lww",
+            merged.values.k.v == "new"
+            and merged.values.f.v == false
+            and type(merged.values.f.v) == "boolean")
+
+        -- 6. Rate limiter: drained bucket denies until refill
+        while bucketTake() do end
+        check("rate_limiter", bucketTake() == false)
+    end)
+end
+
+-- PART 3 END
